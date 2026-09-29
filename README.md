@@ -12,7 +12,7 @@ Stack: **Next.js 16 (App Router) · Postgres · Drizzle ORM · Tailwind v4 · ko
 | Submit daily report (angka KPI + ringkasan) | — | ✅ | ✅ | ✅ |
 | Review & approve report (satuan / bulk) | ✅ | — | — | — |
 | Campaigns | kelola semua | kelola milik sendiri | lihat saja | — |
-| Tasks (kanban) | semua tugas | tugas sendiri | tugas sendiri | tugas sendiri |
+| Tasks (kanban) | semua tugas, filter per role | tugas sendiri (+ tim junior untuk Senior) | tugas sendiri | tugas sendiri |
 | Team: tambah anggota, ganti role, nonaktifkan | ✅ | — | — | — |
 | KPI Targets: bobot, target default, target per orang per bulan | ✅ | — | — | — |
 | KPI Scorecard, Leaderboard, KPI Guide, export CSV | ✅ (semua) | ✅ (diri sendiri) | ✅ | ✅ |
@@ -20,6 +20,25 @@ Stack: **Next.js 16 (App Router) · Postgres · Drizzle ORM · Tailwind v4 · ko
 
 Advertiser punya dua level, **Junior** dan **Senior**, diatur di **Team → Members** (edit anggota → Level advertiser).
 Semua fitur advertiser sama; bedanya hanya Senior yang ikut **Penilaian Kinerja**.
+
+## Tasks per role
+
+Aturan di `src/lib/task-rules.ts`, dipakai server (validasi) dan UI (pilihan yang ditawarkan):
+
+| Pemberi tugas | Boleh memberi tugas ke |
+|---|---|
+| Supervisor | semua anggota |
+| Advertiser Senior | diri sendiri, Advertiser Junior (mentoring), Web Master, SEO |
+| Advertiser Junior | diri sendiri, Web Master, SEO (mis. request landing page) |
+| Web Master / SEO | diri sendiri, Web Master, SEO |
+
+- **Kategori** mengikuti role penerima (Advertiser: setup/optimasi campaign, brief creative, laporan, budget, dan
+  *Mentoring* khusus Senior; Web Master: landing page, revisi LP, tracking & pixel, bug, speed; SEO: artikel, backlink,
+  riset keyword, on-page, laporan). Beberapa kategori mengisi checklist bawaan di deskripsi.
+- **Alur review**: penerima tugas dari orang lain hanya bisa memindahkan sampai *In Review*; pemberi tugas (atau
+  supervisor) yang **Setujui** (Done) atau **Minta revisi**. Tugas untuk diri sendiri bisa langsung Done.
+- Scope board: *Menunggu review saya*, *Tim advertiser junior* (Senior), filter role (Supervisor) dan filter kategori.
+  Badge menu Tasks = tugas terbuka + tugas yang menunggu persetujuanmu.
 
 ## Penilaian Kinerja Advertiser Senior
 

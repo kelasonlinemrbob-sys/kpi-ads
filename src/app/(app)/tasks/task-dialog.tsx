@@ -5,10 +5,11 @@ import { useActionState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { LoaderIcon, PlusIcon } from "lucide-react";
 import { toast } from "sonner";
-import type { Role } from "@/db/schema";
+import type { AdvertiserLevel, Role } from "@/db/schema";
 import { saveTask } from "@/actions/tasks";
 import { PRIORITY_LABEL } from "@/lib/labels";
-import { ROLE_LABEL } from "@/lib/roles";
+import { roleLabel } from "@/lib/roles";
+import { assignRuleHint, categoriesFor, type TaskPerson } from "@/lib/task-rules";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -17,9 +18,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import type { TaskCard } from "./task-board";
 
-export type Person = { id: number; name: string; role: Role };
+export type Person = { id: number; name: string; role: Role; advertiserLevel: AdvertiserLevel | null; assignable: boolean };
 
 export function TaskDialog({
+  currentUser,
   people,
   campaigns,
   task,
@@ -27,6 +29,7 @@ export function TaskDialog({
   defaultAssignee,
   onClose,
 }: {
+  currentUser: TaskPerson;
   people: Person[];
   campaigns: { id: number; name: string }[];
   task?: TaskCard;
@@ -38,6 +41,26 @@ export function TaskDialog({
   const pathname = usePathname();
   const [open, setOpen] = React.useState(!!defaultOpen || !!task);
   const [state, action, pending] = useActionState(saveTask, undefined);
+  const initialAssignee = task?.assigneeId ?? (defaultAssignee && people.some((p) => p.id === defaultAssignee && p.assignable) ? defaultAssignee : undefined);
+  const [assigneeId, setAssigneeId] = React.useState(initialAssignee ? String(initialAssignee) : "");
+  const [category, setCategory] = React.useState(task?.category ?? "none");
+  const [description, setDescription] = React.useState(task?.description ?? "");
+
+  // Role rules decide who can be picked; the current assignee of an existing task always stays listed.
+  const options = people.filter((p) => p.assignable || p.id === task?.assigneeId);
+  const assignee = people.find((p) => String(p.id) === assigneeId);
+  const categories = categoriesFor(assignee);
+
+  const pickAssignee = (value: string) => {
+    setAssigneeId(value);
+    const next = people.find((p) => String(p.id) === value);
+    if (category !== "none" && !categoriesFor(next).some((c) => c.key === category)) setCategory("none");
+  };
+  const pickCategory = (value: string) => {
+    setCategory(value);
+    const template = categories.find((c) => c.key === value)?.template;
+    if (template && !description.trim()) setDescription(template);
+  };
 
   const change = (o: boolean) => {
     setOpen(o);
@@ -75,26 +98,52 @@ export function TaskDialog({
             <Label htmlFor="t-title">Title</Label>
             <Input id="t-title" name="title" defaultValue={task?.title} placeholder="e.g. Build landing page for promo" required />
           </div>
-          <div className="grid gap-2">
-            <Label htmlFor="t-desc">Description</Label>
-            <Textarea id="t-desc" name="description" rows={3} defaultValue={task?.description ?? ""} />
-          </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-2">
               <Label>Assignee</Label>
-              <Select name="assigneeId" defaultValue={String(task?.assigneeId ?? defaultAssignee ?? "")} required>
+              <Select name="assigneeId" value={assigneeId} onValueChange={pickAssignee} required>
                 <SelectTrigger>
                   <SelectValue placeholder="Choose member" />
                 </SelectTrigger>
                 <SelectContent>
-                  {people.map((p) => (
+                  {options.map((p) => (
                     <SelectItem key={p.id} value={String(p.id)}>
-                      {p.name} · {ROLE_LABEL[p.role]}
+                      {p.id === currentUser.id ? `${p.name} (saya)` : p.name} · {roleLabel(p.role, p.advertiserLevel)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
+            <div className="grid gap-2">
+              <Label>Kategori</Label>
+              <Select name="category" value={category} onValueChange={pickCategory}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Tanpa kategori</SelectItem>
+                  {categories.map((c) => (
+                    <SelectItem key={c.key} value={c.key}>
+                      {c.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="-mt-1 text-xs text-muted-foreground sm:col-span-2">{assignRuleHint(currentUser)}</p>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="t-desc">Description</Label>
+            <Textarea
+              id="t-desc"
+              name="description"
+              rows={description.includes("\n") ? 6 : 3}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Pilih kategori untuk memakai checklist bawaan."
+            />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-2">
               <Label>Priority</Label>
               <Select name="priority" defaultValue={task?.priority ?? "medium"}>

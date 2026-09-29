@@ -251,16 +251,20 @@ async function main() {
   const due = (n: number) => iso(new Date(now.getFullYear(), now.getMonth(), now.getDate() + n));
   const id = (email: string) => userRows.find((u) => u.email === email)!.id;
   await db.insert(tasks).values([
-    { title: "Build landing page for Promo Gajian", assigneeId: id("fajar@kpi.local"), createdById: id("rizky@kpi.local"), campaignId: campaignRows[0]!.id, priority: "high", status: "in_progress", dueDate: due(1) },
-    { title: "Fix pixel purchase event on checkout", assigneeId: id("intan@kpi.local"), createdById: supervisor.id, priority: "urgent", status: "todo", dueDate: due(0) },
-    { title: "Improve mobile PageSpeed for /serum", assigneeId: id("fajar@kpi.local"), createdById: supervisor.id, priority: "medium", status: "review", dueDate: due(3) },
-    { title: "Prepare 6 new UGC creatives", assigneeId: id("bima@kpi.local"), createdById: supervisor.id, campaignId: campaignRows[4]!.id, priority: "high", status: "todo", dueDate: due(2) },
-    { title: "Weekly budget reallocation report", assigneeId: id("dewi@kpi.local"), createdById: supervisor.id, priority: "medium", status: "in_progress", dueDate: due(1) },
-    { title: "Write pillar article: skincare routine", assigneeId: id("nadia@kpi.local"), createdById: supervisor.id, priority: "medium", status: "done", dueDate: due(-2), completedAt: new Date(now.getTime() - 2 * 86_400_000) },
-    { title: "Backlink outreach — beauty blogs", assigneeId: id("yoga@kpi.local"), createdById: supervisor.id, priority: "high", status: "todo", dueDate: due(-1) },
-    { title: "Set up Shopee ads keyword negatives", assigneeId: id("salsa@kpi.local"), createdById: supervisor.id, campaignId: campaignRows[6]!.id, priority: "low", status: "done", dueDate: due(-3), completedAt: new Date(now.getTime() - 3 * 86_400_000) },
-    { title: "Audit tracking parameters (UTM) all campaigns", assigneeId: id("rizky@kpi.local"), createdById: supervisor.id, priority: "medium", status: "todo", dueDate: due(4) },
-    { title: "Content brief: 10 articles for next month", assigneeId: id("nadia@kpi.local"), createdById: supervisor.id, priority: "low", status: "in_progress", dueDate: due(6) },
+    { title: "Build landing page for Promo Gajian", category: "landing_page", assigneeId: id("fajar@kpi.local"), createdById: id("rizky@kpi.local"), campaignId: campaignRows[0]!.id, priority: "high", status: "in_progress", dueDate: due(1) },
+    { title: "Fix pixel purchase event on checkout", category: "tracking", assigneeId: id("intan@kpi.local"), createdById: supervisor.id, priority: "urgent", status: "todo", dueDate: due(0) },
+    { title: "Improve mobile PageSpeed for /serum", category: "site_performance", assigneeId: id("fajar@kpi.local"), createdById: supervisor.id, priority: "medium", status: "review", dueDate: due(3) },
+    { title: "Prepare 6 new UGC creatives", category: "creative_brief", assigneeId: id("bima@kpi.local"), createdById: supervisor.id, campaignId: campaignRows[4]!.id, priority: "high", status: "todo", dueDate: due(2) },
+    { title: "Weekly budget reallocation report", category: "ads_report", assigneeId: id("dewi@kpi.local"), createdById: supervisor.id, priority: "medium", status: "in_progress", dueDate: due(1) },
+    { title: "Write pillar article: skincare routine", category: "article", assigneeId: id("nadia@kpi.local"), createdById: supervisor.id, priority: "medium", status: "done", dueDate: due(-2), completedAt: new Date(now.getTime() - 2 * 86_400_000) },
+    { title: "Backlink outreach — beauty blogs", category: "backlink", assigneeId: id("yoga@kpi.local"), createdById: supervisor.id, priority: "high", status: "todo", dueDate: due(-1) },
+    { title: "Set up Shopee ads keyword negatives", category: "campaign_optimization", assigneeId: id("salsa@kpi.local"), createdById: supervisor.id, campaignId: campaignRows[6]!.id, priority: "low", status: "done", dueDate: due(-3), completedAt: new Date(now.getTime() - 3 * 86_400_000) },
+    { title: "Audit tracking parameters (UTM) all campaigns", category: "ads_report", assigneeId: id("rizky@kpi.local"), createdById: supervisor.id, priority: "medium", status: "todo", dueDate: due(4) },
+    // Senior → junior (mentoring) waiting for the senior's approval, and a junior's request to the web master.
+    { title: "Rapikan struktur campaign TikTok sesuai feedback", category: "campaign_optimization", description: "- [x] Pisah ad group per angle\n- [x] Matikan audiens CPA > 2x target\n- [ ] Tambah 3 creative baru", assigneeId: id("bima@kpi.local"), createdById: id("rizky@kpi.local"), priority: "high", status: "review", dueDate: due(1) },
+    { title: "Sesi review mingguan campaign Bima & Salsa", category: "mentoring", assigneeId: id("rizky@kpi.local"), createdById: id("rizky@kpi.local"), priority: "medium", status: "todo", dueDate: due(2) },
+    { title: "Landing page Shopee Flash Sale", category: "landing_page", assigneeId: id("intan@kpi.local"), createdById: id("salsa@kpi.local"), priority: "medium", status: "todo", dueDate: due(5) },
+    { title: "Content brief: 10 articles for next month", category: "keyword_research", assigneeId: id("nadia@kpi.local"), createdById: supervisor.id, priority: "low", status: "in_progress", dueDate: due(6) },
   ]);
 
   const minutesAgo = (m: number) => new Date(now.getTime() - m * 60_000);

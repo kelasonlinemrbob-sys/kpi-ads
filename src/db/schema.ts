@@ -245,6 +245,8 @@ export const tasks = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     campaignId: integer("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+    /** Kind of work, from the assignee role's catalogue in lib/task-rules.ts. */
+    category: varchar("category", { length: 40 }),
     priority: priorityEnum("priority").notNull().default("medium"),
     status: taskStatusEnum("status").notNull().default("todo"),
     dueDate: date("due_date"),

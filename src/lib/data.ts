@@ -1,6 +1,6 @@
 import "server-only";
 import { cache } from "react";
-import { and, asc, desc, eq, gte, inArray, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte, ne, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   activities,
@@ -220,12 +220,23 @@ export async function getNotifications(user: SessionUser) {
       .from(dailyReports)
       .innerJoin(users, eq(users.id, dailyReports.userId))
       .where(and(eq(dailyReports.status, "submitted"), ne(users.role, "advertiser")));
-    return { pendingReviews: row?.n ?? 0, openTasks: 0, revisions: 0 };
+    // Tasks waiting in Review; a supervisor can approve any of them.
+    const [review] = await db
+      .select({ n: sql<number>`count(*)`.mapWith(Number) })
+      .from(tasks)
+      .where(eq(tasks.status, "review"));
+    return { pendingReviews: row?.n ?? 0, openTasks: review?.n ?? 0, revisions: 0 };
   }
+  // Open tasks to do (not the ones already handed in for review) + others' work waiting for my approval.
   const [t] = await db
     .select({ n: sql<number>`count(*)`.mapWith(Number) })
     .from(tasks)
-    .where(and(eq(tasks.assigneeId, user.id), ne(tasks.status, "done")));
+    .where(
+      or(
+        and(eq(tasks.assigneeId, user.id), notInArray(tasks.status, ["done", "review"])),
+        and(eq(tasks.createdById, user.id), ne(tasks.assigneeId, user.id), eq(tasks.status, "review")),
+      ),
+    );
   const [r] = await db
     .select({ n: sql<number>`count(*)`.mapWith(Number) })
     .from(dailyReports)
