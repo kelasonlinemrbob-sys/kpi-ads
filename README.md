@@ -40,6 +40,23 @@ Aturan di `src/lib/task-rules.ts`, dipakai server (validasi) dan UI (pilihan yan
 - Scope board: *Menunggu review saya*, *Tim advertiser junior* (Senior), filter role (Supervisor) dan filter kategori.
   Badge menu Tasks = tugas terbuka + tugas yang menunggu persetujuanmu.
 
+## Role rangkap (1 orang 2 role)
+
+Di **Team → Members → Edit**, pilih **Role kedua** (mis. Advertiser + SEO Specialist) dan atur **porsi skor**
+(default 60% role utama / 40% role kedua). Advertiser harus menjadi role utama bila digabung, karena fitur iklan
+(campaign, Generate dari Ads, WhatsApp) mengikuti role utama.
+
+- **Skor KPI total** = porsi × skor tiap role (mis. 60% × skor Advertiser + 40% × skor SEO). Skor tiap role dihitung
+  dari KPI role itu saja.
+- **Target**: target default yang berupa total bulanan diprorata sesuai porsi (Leads 900 → 540 pada porsi 60%);
+  rata-rata/rasio/posisi (CPL, PageSpeed, Keywords Top 10) tidak. Target khusus per orang di KPI Targets berlaku apa
+  adanya (anggota rangkap juga muncul di tab role keduanya).
+- **Laporan harian**: satu laporan per hari dengan tab per role (*Laporan Iklan* dan *Laporan SEO Specialist*); tiap tab
+  hanya mengganti angka KPI role-nya. Bagian non-advertiser tetap direview supervisor; hari lapor Senin–Sabtu.
+- **Scorecard**: tab *Gabungan* / per role, breakdown per role dengan poin yang dijumlah menjadi skor total.
+  **Leaderboard** per role memakai skor role itu saja (adil dibanding anggota yang 100% di role tersebut);
+  *All roles* memakai skor total. Tasks menerima tugas & kategori dari kedua role.
+
 ## Penilaian Kinerja Advertiser Senior
 
 Menerapkan dokumen HRGA *Rancangan Skema Sistem Penilaian Kinerja — Advertiser Senior* (SG/ADV-SR/HRGA/2026),

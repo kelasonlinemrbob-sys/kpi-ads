@@ -41,12 +41,21 @@ const METRICS: MetricSeed[] = [
   { key: "organic_sessions", name: "Organic Sessions", role: "seo", unit: "number", aggregation: "sum", weight: 25, defaultTarget: 45_000, sortOrder: 4, description: "Sessions from organic search (GA4)." },
 ];
 
-const PEOPLE: { name: string; email: string; role: Role; advertiserLevel?: AdvertiserLevel; title: string; factor: number }[] = [
+const PEOPLE: {
+  name: string;
+  email: string;
+  role: Role;
+  advertiserLevel?: AdvertiserLevel;
+  secondaryRole?: Role;
+  secondaryShare?: number;
+  title: string;
+  factor: number;
+}[] = [
   { name: "Achmad Hakim", email: "supervisor@kpi.local", role: "supervisor", title: "Performance Marketing Lead", factor: 1 },
   { name: "Rizky Pratama", email: "rizky@kpi.local", role: "advertiser", advertiserLevel: "senior", title: "Meta Ads Specialist", factor: 1.12 },
   { name: "Dewi Lestari", email: "dewi@kpi.local", role: "advertiser", advertiserLevel: "senior", title: "Google Ads Specialist", factor: 0.96 },
   { name: "Bima Saputra", email: "bima@kpi.local", role: "advertiser", title: "TikTok Ads Specialist", factor: 0.74 },
-  { name: "Salsa Nabila", email: "salsa@kpi.local", role: "advertiser", title: "Marketplace Ads Specialist", factor: 0.88 },
+  { name: "Salsa Nabila", email: "salsa@kpi.local", role: "advertiser", secondaryRole: "seo", secondaryShare: 40, title: "Marketplace Ads & SEO", factor: 0.88 },
   { name: "Fajar Nugroho", email: "fajar@kpi.local", role: "webmaster", title: "Web Master", factor: 1.05 },
   { name: "Intan Permata", email: "intan@kpi.local", role: "webmaster", title: "Web Developer", factor: 0.82 },
   { name: "Nadia Putri", email: "nadia@kpi.local", role: "seo", title: "SEO Specialist", factor: 1.08 },
@@ -168,10 +177,22 @@ async function main() {
       if (date === today && notReportedToday.has(u.email)) continue;
       if (date !== today && rand() < 0.06 + (1 - f) * 0.12) continue; // occasionally missed
 
-      const values = dailyValues(role, f);
+      let values = dailyValues(role, f);
       if (role === "seo") {
         keywords += Math.round((rand() - 0.35) * 3 * f);
         values.top10_keywords = keywords;
+      }
+      // Dual-role member: each role's totals shrink with its share, and the second role's KPIs join the report.
+      if (u.secondaryRole) {
+        const second = u.secondaryShare / 100;
+        const scale = (v: Record<string, number>, by: number, keep: string[] = []) =>
+          Object.fromEntries(Object.entries(v).map(([k, x]) => [k, keep.includes(k) ? x : Math.round(x * by)]));
+        const extra = dailyValues(u.secondaryRole, f);
+        if (u.secondaryRole === "seo") {
+          keywords += Math.round((rand() - 0.35) * 3 * f);
+          extra.top10_keywords = keywords;
+        }
+        values = { ...scale(values, 1 - second, ["ad_spend"]), ...scale(extra, second, ["top10_keywords", "page_speed", "uptime"]) };
       }
       const ageDays = Math.round((now.getTime() - d.getTime()) / 86_400_000);
       const status = ageDays <= 1 ? "submitted" : rand() < 0.05 ? "revision" : ageDays <= 3 && rand() < 0.5 ? "submitted" : "approved";

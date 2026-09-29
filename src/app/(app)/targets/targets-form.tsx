@@ -12,7 +12,11 @@ import { Panel } from "@/components/dashboard/panel";
 import { UserAvatar } from "@/components/user-avatar";
 
 type M = { id: number; name: string; unit: Unit; aggregation: string; higherIsBetter: boolean; weight: number; defaultTarget: number | null };
-type Member = { id: number; name: string; title: string | null; targets: Record<number, number> };
+/** `share`: the member's share of this role (100 unless they hold two roles); scales default totals. */
+type Member = { id: number; name: string; title: string | null; share: number; targets: Record<number, number> };
+
+const defaultFor = (m: M, share: number) =>
+  m.defaultTarget === null ? null : m.aggregation === "sum" && share !== 100 ? Math.round(m.defaultTarget * share) / 100 : m.defaultTarget;
 
 const unitHint = (u: Unit) => (u === "currency" ? "Rp" : u === "percent" ? "%" : u === "ratio" ? "x" : "");
 
@@ -105,7 +109,9 @@ export function TargetsForm({ role, period, metrics, members }: { role: string; 
                       <UserAvatar name={mem.name} className="size-7" />
                       <span>
                         <span className="block font-medium">{mem.name}</span>
-                        <span className="block text-xs text-muted-foreground">{mem.title}</span>
+                        <span className="block text-xs text-muted-foreground">
+                          {mem.share !== 100 ? `Rangkap · porsi ${mem.share}% (default diprorata)` : mem.title}
+                        </span>
                       </span>
                     </span>
                   </TableCell>
@@ -117,7 +123,7 @@ export function TargetsForm({ role, period, metrics, members }: { role: string; 
                         min={0}
                         step="any"
                         defaultValue={mem.targets[m.id] ?? ""}
-                        placeholder={m.defaultTarget === null ? "—" : String(m.defaultTarget)}
+                        placeholder={defaultFor(m, mem.share) === null ? "—" : String(defaultFor(m, mem.share))}
                         className={cn(cell, m.unit === "currency" && "min-w-36", mem.targets[m.id] !== undefined && "border-foreground/30 font-medium")}
                         aria-label={`${mem.name} ${m.name} target`}
                       />

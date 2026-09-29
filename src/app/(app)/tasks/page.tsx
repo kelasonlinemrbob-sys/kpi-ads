@@ -6,6 +6,7 @@ import { campaigns, tasks, users } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { todayISO } from "@/lib/kpi";
 import { MEMBER_ROLES, ROLE_LABEL, isSeniorAdvertiser } from "@/lib/roles";
+import { memberRoles } from "@/lib/member-roles";
 import { canAssign, TASK_CATEGORIES } from "@/lib/task-rules";
 import { PageHeader } from "@/components/dashboard/panel";
 import { UrlSelect } from "@/components/dashboard/url-select";
@@ -35,7 +36,7 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
   else if (scope === "juniors") where.push(eq(users.role, "advertiser"), or(isNull(users.advertiserLevel), eq(users.advertiserLevel, "junior"))!);
   else if (!isSupervisor) where.push(or(eq(tasks.assigneeId, user.id), eq(tasks.createdById, user.id))!);
   if (sp.assignee && isSupervisor && scope === "all") where.push(eq(tasks.assigneeId, Number(sp.assignee)));
-  if (roleFilter) where.push(eq(users.role, roleFilter));
+  if (roleFilter) where.push(or(eq(users.role, roleFilter), eq(users.secondaryRole, roleFilter))!);
   if (category) where.push(eq(tasks.category, category));
 
   const [rows, people, campaignOptions] = await Promise.all([
@@ -53,7 +54,7 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
       .where(where.length ? and(...where) : undefined)
       .orderBy(asc(tasks.dueDate), asc(tasks.id)),
     db
-      .select({ id: users.id, name: users.name, role: users.role, advertiserLevel: users.advertiserLevel })
+      .select({ id: users.id, name: users.name, role: users.role, advertiserLevel: users.advertiserLevel, secondaryRole: users.secondaryRole })
       .from(users)
       .where(eq(users.isActive, true))
       .orderBy(asc(users.name)),
@@ -77,7 +78,12 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
   }));
   const assignable = people.map((p) => ({ ...p, assignable: canAssign(user, p) }));
   // Categories of the roles this user works with (their own and the ones they can give tasks to).
-  const roles = new Set(assignable.filter((p) => p.assignable).map((p) => p.role).concat(user.role));
+  const roles = new Set(
+    assignable
+      .filter((p) => p.assignable)
+      .flatMap((p) => memberRoles(p))
+      .concat(memberRoles(user)),
+  );
   const categoryOptions = TASK_CATEGORIES.filter((c) => !c.roles.length || c.roles.some((r) => roles.has(r)));
 
   const scopeOptions = [
@@ -115,7 +121,7 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
               options={[{ value: "all", label: "Semua kategori" }, ...categoryOptions.map((c) => ({ value: c.key, label: c.label }))]}
             />
             <TaskDialog
-              currentUser={{ id: user.id, role: user.role, advertiserLevel: user.advertiserLevel }}
+              currentUser={{ id: user.id, role: user.role, advertiserLevel: user.advertiserLevel, secondaryRole: user.secondaryRole }}
               people={assignable}
               campaigns={campaignOptions}
               defaultOpen={sp.new === "1"}
@@ -127,7 +133,7 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
       <TaskBoard
         today={todayISO()}
         tasks={cards}
-        currentUser={{ id: user.id, role: user.role, advertiserLevel: user.advertiserLevel }}
+        currentUser={{ id: user.id, role: user.role, advertiserLevel: user.advertiserLevel, secondaryRole: user.secondaryRole }}
         people={assignable}
         campaigns={campaignOptions}
       />

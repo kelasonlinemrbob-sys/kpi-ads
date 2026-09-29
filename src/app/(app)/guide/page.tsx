@@ -3,6 +3,7 @@ import { BookOpenIcon, CalculatorIcon } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { getMetrics } from "@/lib/data";
 import { MAX_ACHIEVEMENT } from "@/lib/kpi";
+import { hasRole } from "@/lib/member-roles";
 import { MEMBER_ROLES, ROLE_LABEL } from "@/lib/roles";
 import { formatValue } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -16,7 +17,7 @@ const AGG = { sum: "Monthly total", avg: "Daily average", last: "Latest value", 
 export default async function GuidePage() {
   const user = await requireUser();
   const metrics = await getMetrics();
-  const roles = user.role === "supervisor" ? MEMBER_ROLES : MEMBER_ROLES.filter((r) => r === user.role);
+  const roles = user.role === "supervisor" ? MEMBER_ROLES : MEMBER_ROLES.filter((r) => hasRole(user, r));
 
   return (
     <>

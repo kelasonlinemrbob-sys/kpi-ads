@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { requireRole } from "@/lib/auth";
 import { getMembers, getMetrics, getTargetMap } from "@/lib/data";
+import { hasRole, roleSlots } from "@/lib/member-roles";
 import { MEMBER_ROLES, ROLE_LABEL } from "@/lib/roles";
 import { resolvePeriod } from "@/lib/period";
 import { cn } from "@/lib/utils";
@@ -18,7 +19,8 @@ export default async function TargetsPage({ searchParams }: { searchParams: Prom
   const role = MEMBER_ROLES.find((r) => r === sp.role) ?? "advertiser";
   const [metrics, members] = await Promise.all([getMetrics(), getMembers()]);
   const roleMetrics = metrics.filter((m) => m.role === role);
-  const roleMembers = members.filter((m) => m.role === role);
+  // Members holding the role as main or second role; the second role's defaults are prorated by its share.
+  const roleMembers = members.filter((m) => hasRole(m, role));
   const targets = await getTargetMap(period, roleMembers.map((m) => m.id));
 
   return (
@@ -59,6 +61,7 @@ export default async function TargetsPage({ searchParams }: { searchParams: Prom
           id: m.id,
           name: m.name,
           title: m.title,
+          share: roleSlots(m).find((slot) => slot.role === role)?.share ?? 100,
           targets: Object.fromEntries(targets.get(m.id) ?? []),
         }))}
       />

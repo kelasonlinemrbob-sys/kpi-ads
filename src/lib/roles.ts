@@ -16,6 +16,14 @@ export function roleLabel(role: Role, level?: AdvertiserLevel | null) {
   return role === "advertiser" ? `${ROLE_LABEL.advertiser} ${ADVERTISER_LEVEL_LABEL[level ?? "junior"]}` : ROLE_LABEL[role];
 }
 
+/** "Advertiser Junior 60% + SEO Specialist 40%" for a dual-role member, roleLabel() otherwise. */
+export function rolesLabel(m: { role: Role; advertiserLevel?: AdvertiserLevel | null; secondaryRole?: Role | null; secondaryShare?: number | null }) {
+  const main = roleLabel(m.role, m.advertiserLevel);
+  if (!m.secondaryRole || m.secondaryRole === m.role || m.role === "supervisor") return main;
+  const second = m.secondaryShare ?? 40;
+  return `${main} ${100 - second}% + ${ROLE_LABEL[m.secondaryRole]} ${second}%`;
+}
+
 export const isSeniorAdvertiser = (user: { role: Role; advertiserLevel?: AdvertiserLevel | null }) =>
   user.role === "advertiser" && user.advertiserLevel === "senior";
 

@@ -35,6 +35,8 @@ import {
 } from "@/lib/kpi";
 import { advertiserReportDeadlinePassed, isAdvertiserReportDay } from "@/lib/reporting";
 import { resolvePeriod } from "@/lib/period";
+import { hasSecondRole, memberRoles, reportsMondayToFriday, roleSlots } from "@/lib/member-roles";
+import { ROLE_LABEL } from "@/lib/roles";
 import { formatDate, formatNumber, formatValue } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -163,12 +165,13 @@ async function SupervisorDashboard({ user, period }: { user: SessionUser; period
     name: s.member.name,
     email: s.member.email,
     role: s.member.role,
+    secondaryRole: s.member.secondaryRole ?? null,
     title: s.member.title,
     score: s.score,
     delta: pctDelta(s.score, s.prevScore),
     status: s.status,
     reportsCount: s.reportsCount,
-    expectedReports: workingDays(start, asOf, s.member.role === "advertiser"),
+    expectedReports: workingDays(start, asOf, reportsMondayToFriday(s.member)),
     lastReportDate: s.lastReportDate,
     reportedToday: reportedToday.has(s.member.id),
     reportDueToday: s.member.role === "advertiser" && advertiserDueToday,
@@ -221,7 +224,15 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
   const { start } = periodRange(period);
   const prev = comparableRange(period, asOf);
   const dates = datesBetween(start, asOf);
-  const me = { id: user.id, name: user.name, email: user.email, role: user.role, title: user.title };
+  const me = {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    title: user.title,
+    secondaryRole: user.secondaryRole,
+    secondaryShare: user.secondaryShare,
+  };
   const [metrics, [card], entries, prevEntries, scoreSeries, feed, [todayReport], myTasks] = await Promise.all([
     getMetrics(),
     getScorecards(period, [me]),
@@ -241,7 +252,9 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
       .orderBy(asc(tasks.dueDate))
       .limit(5),
   ]);
-  const roleMetrics = metrics.filter((m) => m.role === role);
+  // Every role the member holds (a dual-role member sees both sets of KPIs).
+  const roles = memberRoles(user);
+  const roleMetrics = metrics.filter((m) => roles.includes(m.role));
   const byKey = new Map(metrics.map((m) => [m.key, m]));
   const headline = HEADLINE[role].map(({ key, icon }) => ({
     icon,
@@ -249,7 +262,7 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
     trend: metricTrend(byKey.get(key)!, metrics, entries, prevEntries, dates),
   }));
   const isCurrent = period === todayISO().slice(0, 7);
-  const reportRequiredToday = role !== "advertiser" || isAdvertiserReportDay(todayISO());
+  const reportRequiredToday = !reportsMondayToFriday(user) || isAdvertiserReportDay(todayISO());
   const reportOverdue = role === "advertiser" && reportRequiredToday && advertiserReportDeadlinePassed();
 
   return (
@@ -276,7 +289,7 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
         )}
         <div className="grid gap-3 md:grid-cols-3">
           <StatCard
-            title="My KPI Score"
+            title={hasSecondRole(user) ? `My KPI Score (${roleSlots(user).map((r) => `${r.share}%`).join(" + ")})` : "My KPI Score"}
             icon={GaugeIcon}
             value={card?.score == null ? "–" : formatNumber(card.score, 1)}
             delta={pctDelta(card?.score ?? null, card?.prevScore ?? null)}
@@ -296,7 +309,10 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
         </div>
         <TrendChart
           title="My Daily Performance"
-          series={roleMetrics.map((m) => metricTrend(m, metrics, entries, prevEntries, dates))}
+          series={roleMetrics.map((m) => ({
+            ...metricTrend(m, metrics, entries, prevEntries, dates),
+            ...(roles.length > 1 ? { label: `${m.name} · ${ROLE_LABEL[m.role]}` } : {}),
+          }))}
           defaultKey={HEADLINE[role][0]!.key}
         />
       </div>

@@ -1,6 +1,6 @@
 import "server-only";
 import { cache } from "react";
-import { and, asc, desc, eq, gte, inArray, lte, ne, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, lte, ne, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   activities,
@@ -13,8 +13,10 @@ import {
   tasks,
   users,
   type AdvertiserReportItemCampaign,
+  type KpiMetric,
   type Role,
 } from "@/db/schema";
+import { combineScores, needsReview, roleSlots, type RoleHolder, type RoleSlot } from "@/lib/member-roles";
 import type { SessionUser } from "@/lib/auth";
 import {
   comparableRange,
@@ -28,6 +30,15 @@ import {
   datesBetween,
 } from "@/lib/kpi";
 
+/**
+ * Members whose reports go through supervisor review: anyone who isn't purely an advertiser
+ * (an advertiser with a second role, e.g. SEO, gets that part reviewed). SQL twin of needsReview().
+ */
+export const reviewedMemberSql = or(
+  ne(users.role, "advertiser"),
+  and(isNotNull(users.secondaryRole), notInArray(users.secondaryRole, ["advertiser", "supervisor"])),
+)!;
+
 export const getMetrics = cache(async () =>
   db.select().from(kpiMetrics).orderBy(asc(kpiMetrics.role), asc(kpiMetrics.sortOrder)),
 );
@@ -39,6 +50,9 @@ export const getMembers = cache(async (includeInactive = false) =>
       name: users.name,
       email: users.email,
       role: users.role,
+      advertiserLevel: users.advertiserLevel,
+      secondaryRole: users.secondaryRole,
+      secondaryShare: users.secondaryShare,
       title: users.title,
       isActive: users.isActive,
       lastLoginAt: users.lastLoginAt,
@@ -86,15 +100,49 @@ export async function getTargetMap(period: string, userIds?: number[]) {
   return map;
 }
 
+export type RoleScore = RoleSlot & { score: number | null; prevScore: number | null; results: MetricResult[] };
+
 export type Scorecard = {
-  member: Pick<Member, "id" | "name" | "email" | "role" | "title">;
+  member: Pick<Member, "id" | "name" | "email" | "role" | "title"> & Partial<Pick<Member, "secondaryRole" | "secondaryShare" | "advertiserLevel">>;
+  /** Combined score: each role's score weighted by its share (just the role's score for one role). */
   score: number | null;
   prevScore: number | null;
   status: KpiStatus;
+  /** Results of every role, main role first. */
   results: MetricResult[];
+  /** One entry per role the member holds. */
+  roleScores: RoleScore[];
   reportsCount: number;
   lastReportDate: string | null;
 };
+
+/** Score of one role for a member (their combined score when they only hold that role). */
+export function scoreForRole(card: Scorecard, role: Role) {
+  return card.roleScores.find((r) => r.role === role)?.score ?? null;
+}
+
+/** Scores a member in each of their roles; default targets are scaled by the role's share. */
+function scoreRoles(opts: {
+  member: RoleHolder;
+  metrics: KpiMetric[];
+  entries: Entry[];
+  targets: Map<number, number>;
+  period: string;
+  asOf: string;
+}) {
+  return roleSlots(opts.member).map((slot) => ({
+    ...slot,
+    ...scoreMember({
+      metrics: opts.metrics.filter((m) => m.role === slot.role),
+      allMetrics: opts.metrics,
+      entries: opts.entries,
+      targets: opts.targets,
+      period: opts.period,
+      asOf: opts.asOf,
+      targetScale: slot.share / 100,
+    }),
+  }));
+}
 
 /** Scores every given member for the period, plus the comparable slice of last month. */
 export async function getScorecards(period: string, members: Scorecard["member"][]): Promise<Scorecard[]> {
@@ -123,30 +171,31 @@ export async function getScorecards(period: string, members: Scorecard["member"]
   const stats = new Map(reportStats.map((r) => [r.userId, r]));
 
   return members.map((member) => {
-    const roleMetrics = metrics.filter((m) => m.role === member.role);
-    const cur = scoreMember({
-      metrics: roleMetrics,
-      allMetrics: metrics,
+    const cur = scoreRoles({
+      member,
+      metrics,
       entries: entries.filter((e) => e.userId === member.id),
       targets: targets.get(member.id) ?? new Map(),
       period,
       asOf,
     });
-    const before = scoreMember({
-      metrics: roleMetrics,
-      allMetrics: metrics,
+    const before = scoreRoles({
+      member,
+      metrics,
       entries: prevEntries.filter((e) => e.userId === member.id),
       targets: prevTargets.get(member.id) ?? new Map(),
       period: prev.period,
       asOf: prev.end,
     });
+    const score = combineScores(cur);
     const s = stats.get(member.id);
     return {
       member,
-      score: cur.score,
-      prevScore: before.score,
-      status: statusOf(cur.score),
-      results: cur.results,
+      score,
+      prevScore: combineScores(before),
+      status: statusOf(score),
+      results: cur.flatMap((r) => r.results),
+      roleScores: cur.map((r, i) => ({ role: r.role, share: r.share, score: r.score, prevScore: before[i]?.score ?? null, results: r.results })),
       reportsCount: s?.count ?? 0,
       lastReportDate: s?.last ?? null,
     };
@@ -161,16 +210,17 @@ export async function getTeamScoreSeries(period: string, members: Scorecard["mem
   const [metrics, entries, targets] = await Promise.all([getMetrics(), getEntries(start, asOf, ids), getTargetMap(period, ids)]);
   return datesBetween(start, asOf).map((date) => {
     const scores = members
-      .map(
-        (member) =>
-          scoreMember({
-            metrics: metrics.filter((m) => m.role === member.role),
-            allMetrics: metrics,
+      .map((member) =>
+        combineScores(
+          scoreRoles({
+            member,
+            metrics,
             entries: entries.filter((e) => e.userId === member.id && e.date <= date),
             targets: targets.get(member.id) ?? new Map(),
             period,
             asOf: date,
-          }).score,
+          }),
+        ),
       )
       .filter((s): s is number => s !== null);
     return { date, value: scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0 };
@@ -219,7 +269,7 @@ export async function getNotifications(user: SessionUser) {
       .select({ n: sql<number>`count(*)`.mapWith(Number) })
       .from(dailyReports)
       .innerJoin(users, eq(users.id, dailyReports.userId))
-      .where(and(eq(dailyReports.status, "submitted"), ne(users.role, "advertiser")));
+      .where(and(eq(dailyReports.status, "submitted"), reviewedMemberSql));
     // Tasks waiting in Review; a supervisor can approve any of them.
     const [review] = await db
       .select({ n: sql<number>`count(*)`.mapWith(Number) })
@@ -242,7 +292,7 @@ export async function getNotifications(user: SessionUser) {
     .from(dailyReports)
     .where(and(eq(dailyReports.userId, user.id), eq(dailyReports.status, "revision")));
   // Advertiser reports are recorded without review, so there is nothing to revise.
-  return { pendingReviews: 0, openTasks: t?.n ?? 0, revisions: user.role === "advertiser" ? 0 : (r?.n ?? 0) };
+  return { pendingReviews: 0, openTasks: t?.n ?? 0, revisions: needsReview(user) ? (r?.n ?? 0) : 0 };
 }
 
 export function roleMetrics<T extends { role: Role }>(metrics: T[], role: Role) {

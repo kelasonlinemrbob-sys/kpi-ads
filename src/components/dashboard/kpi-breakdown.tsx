@@ -11,7 +11,16 @@ import { MonoMeter } from "./mono";
  * Per-KPI actual vs target. `mono` is the black & white scorecard variant, which also shows each
  * KPI's contribution in score points (the contributions add up to the KPI score).
  */
-export function KpiBreakdownTable({ results, mono }: { results: MetricResult[]; mono?: boolean }) {
+export function KpiBreakdownTable({
+  results,
+  mono,
+  pointScale = 1,
+}: {
+  results: MetricResult[];
+  mono?: boolean;
+  /** For one role of a dual-role member: the role's share, so points add up to the combined score. */
+  pointScale?: number;
+}) {
   const scoredWeight = results.reduce((sum, r) => sum + (r.metric.weight > 0 && r.achievement !== null ? r.metric.weight : 0), 0);
   return (
     <Table>
@@ -75,8 +84,8 @@ export function KpiBreakdownTable({ results, mono }: { results: MetricResult[]; 
                 <TableCell className="text-right tabular-nums">
                   {r.metric.weight > 0 && r.achievement !== null && scoredWeight ? (
                     <>
-                      <span className="font-medium">{formatNumber((r.achievement * r.metric.weight * 100) / scoredWeight, 1)}</span>
-                      <span className="text-muted-foreground"> / {formatNumber((r.metric.weight * 100) / scoredWeight, 0)}</span>
+                      <span className="font-medium">{formatNumber(((r.achievement * r.metric.weight * 100) / scoredWeight) * pointScale, 1)}</span>
+                      <span className="text-muted-foreground"> / {formatNumber(((r.metric.weight * 100) / scoredWeight) * pointScale, 0)}</span>
                     </>
                   ) : (
                     <span className="text-muted-foreground">–</span>

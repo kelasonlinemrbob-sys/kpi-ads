@@ -35,7 +35,7 @@ export async function saveTask(_: FormState, formData: FormData): Promise<FormSt
   const { id, ...data } = parsed.data;
 
   const [assignee] = await db
-    .select({ id: users.id, name: users.name, role: users.role, advertiserLevel: users.advertiserLevel, isActive: users.isActive })
+    .select({ id: users.id, name: users.name, role: users.role, advertiserLevel: users.advertiserLevel, secondaryRole: users.secondaryRole, isActive: users.isActive })
     .from(users)
     .where(eq(users.id, data.assigneeId));
   if (!assignee?.isActive) return { error: "Assignee not found." };

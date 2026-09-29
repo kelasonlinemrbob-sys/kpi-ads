@@ -38,6 +38,7 @@ export type TeamRow = {
   name: string;
   email: string;
   role: Role;
+  secondaryRole?: Role | null;
   title: string | null;
   score: number | null;
   delta: number | null;
@@ -60,7 +61,7 @@ export function TeamTable({ rows, period, title = "Team Performance" }: { rows: 
 
   const q = query.trim().toLowerCase();
   const filtered = rows
-    .filter((r) => (role === "all" || r.role === role) && (!q || `${r.name} ${r.email} ${r.title ?? ""}`.toLowerCase().includes(q)))
+    .filter((r) => (role === "all" || r.role === role || r.secondaryRole === role) && (!q || `${r.name} ${r.email} ${r.title ?? ""}`.toLowerCase().includes(q)))
     .sort((a, b) => {
       const v = (r: TeamRow): string | number => {
         switch (sort.key) {
@@ -183,6 +184,11 @@ export function TeamTable({ rows, period, title = "Team Performance" }: { rows: 
                       <Badge variant="outline" className={ROLE_BADGE[r.role]}>
                         {ROLE_LABEL[r.role]}
                       </Badge>
+                      {r.secondaryRole && (
+                        <Badge variant="outline" className={cn("ml-1", ROLE_BADGE[r.secondaryRole])}>
+                          + {ROLE_LABEL[r.secondaryRole]}
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell>
                       <span className="flex items-center gap-3">

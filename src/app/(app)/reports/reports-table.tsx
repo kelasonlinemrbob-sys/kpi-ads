@@ -24,6 +24,9 @@ export type ReportRow = {
   userId: number;
   name: string;
   role: Role;
+  secondaryRole: Role | null;
+  /** Advertiser-only reports are recorded without review. */
+  noReview: boolean;
   createdAt: string;
   highlights: { label: string; value: string }[];
 };
@@ -32,7 +35,7 @@ export function ReportsTable({ rows, canApprove, showMember }: { rows: ReportRow
   const router = useRouter();
   const [selected, setSelected] = React.useState<Set<number>>(new Set());
   const [pending, startTransition] = React.useTransition();
-  const selectable = rows.filter((r) => r.status === "submitted" && r.role !== "advertiser");
+  const selectable = rows.filter((r) => r.status === "submitted" && !r.noReview);
   const allSelected = selectable.length > 0 && selectable.every((r) => selected.has(r.id));
 
   React.useEffect(() => setSelected(new Set()), [rows]);
@@ -102,7 +105,7 @@ export function ReportsTable({ rows, canApprove, showMember }: { rows: ReportRow
                       <Checkbox
                         aria-label={`Select report ${r.id}`}
                         checked={selected.has(r.id)}
-                        disabled={r.status !== "submitted" || r.role === "advertiser"}
+                        disabled={r.status !== "submitted" || r.noReview}
                         onCheckedChange={() => toggle(r.id)}
                       />
                     </TableCell>
@@ -116,7 +119,7 @@ export function ReportsTable({ rows, canApprove, showMember }: { rows: ReportRow
                         <UserAvatar name={r.name} className="size-7" />
                         <span>
                           <span className="block font-medium">{r.name}</span>
-                          <span className="block text-xs text-muted-foreground">{ROLE_LABEL[r.role]}</span>
+                          <span className="block text-xs text-muted-foreground">{ROLE_LABEL[r.role]}{r.secondaryRole && r.secondaryRole !== r.role ? ` + ${ROLE_LABEL[r.secondaryRole]}` : ""}</span>
                         </span>
                       </span>
                     </TableCell>
@@ -133,7 +136,7 @@ export function ReportsTable({ rows, canApprove, showMember }: { rows: ReportRow
                   </TableCell>
                   <TableCell className="hidden max-w-80 truncate text-muted-foreground 2xl:table-cell">{r.summary}</TableCell>
                   <TableCell>
-                    <ReportStatus status={r.status} noReview={r.role === "advertiser"} />
+                    <ReportStatus status={r.status} noReview={r.noReview} />
                   </TableCell>
                   <TableCell>
                     <Button asChild variant="ghost" size="icon-sm" aria-label="Open report">

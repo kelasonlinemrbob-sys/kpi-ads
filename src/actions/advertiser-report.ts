@@ -16,6 +16,7 @@ import {
 } from "@/db/schema";
 import type { SessionUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
+import { hasSecondRole } from "@/lib/member-roles";
 import { queueReportMessage } from "@/lib/whatsapp";
 import { todayISO } from "@/lib/kpi";
 import { advertiserReportWindows, isAdvertiserReportDay } from "@/lib/reporting";
@@ -126,21 +127,29 @@ export async function saveAdvertiserReport(user: SessionUser, formData: FormData
     .from(kpiMetrics)
     .where(and(eq(kpiMetrics.role, "advertiser"), inArray(kpiMetrics.key, ["ad_spend", "leads"])));
 
+  const dualRole = hasSecondRole(user);
+  const advertiserMetricIds = (await db.select({ id: kpiMetrics.id }).from(kpiMetrics).where(eq(kpiMetrics.role, "advertiser"))).map((m) => m.id);
+
   const reportId = await db.transaction(async (tx) => {
     let id: number;
     if (existing) {
       await tx
         .update(dailyReports)
-        .set({
-          summary: notes,
-          blockers: null,
-          planTomorrow: null,
-          status: "submitted",
-          reviewerId: null,
-          reviewNote: null,
-          reviewedAt: null,
-          updatedAt: new Date(),
-        })
+        .set(
+          dualRole
+            ? // The SEO (or other) part of a dual-role report keeps its review; ad numbers don't need one.
+              { summary: notes, updatedAt: new Date() }
+            : {
+                summary: notes,
+                blockers: null,
+                planTomorrow: null,
+                status: "submitted",
+                reviewerId: null,
+                reviewNote: null,
+                reviewedAt: null,
+                updatedAt: new Date(),
+              },
+        )
         .where(eq(dailyReports.id, existing.id));
       id = existing.id;
     } else {
@@ -154,7 +163,10 @@ export async function saveAdvertiserReport(user: SessionUser, formData: FormData
     await tx
       .delete(advertiserReportItems)
       .where(and(eq(advertiserReportItems.reportId, id), inArray(advertiserReportItems.performanceDate, submittedDates)));
-    await tx.delete(kpiEntries).where(eq(kpiEntries.reportId, id));
+    // Only the advertiser KPIs; a dual-role member's other KPIs on this report stay.
+    await tx
+      .delete(kpiEntries)
+      .where(and(eq(kpiEntries.reportId, id), inArray(kpiEntries.metricId, advertiserMetricIds)));
 
     const inserted = await tx
       .insert(advertiserReportItems)

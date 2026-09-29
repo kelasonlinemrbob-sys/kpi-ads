@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
@@ -8,6 +8,7 @@ import { db } from "@/db";
 import { dailyReports, kpiEntries, kpiMetrics, users } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
+import { memberRoles, needsReview } from "@/lib/member-roles";
 import { todayISO } from "@/lib/kpi";
 import { addDays, formatDate } from "@/lib/utils";
 import { saveAdvertiserReport } from "./advertiser-report";
@@ -26,7 +27,11 @@ const reportSchema = z.object({
 export async function saveReport(_: FormState, formData: FormData): Promise<FormState> {
   const user = await requireUser();
   if (user.role === "supervisor") return { error: "Supervisors don't submit daily reports." };
-  if (user.role === "advertiser") return saveAdvertiserReport(user, formData);
+  // Dual-role members submit each role's part separately; both land on the same daily report.
+  const requestedRole = String(formData.get("role") ?? user.role);
+  const role = memberRoles(user).find((r) => r === requestedRole);
+  if (!role) return { error: "Role laporan tidak valid." };
+  if (role === "advertiser") return saveAdvertiserReport(user, formData);
 
   const parsed = reportSchema.safeParse({
     date: formData.get("date"),
@@ -41,9 +46,8 @@ export async function saveReport(_: FormState, formData: FormData): Promise<Form
   if (date > today) return { error: "You can't report for a future date." };
   if (date < addDays(today, -BACKFILL_DAYS)) return { error: `Reports can only be backfilled up to ${BACKFILL_DAYS} days.` };
 
-  const metrics = (await db.select().from(kpiMetrics).where(eq(kpiMetrics.role, user.role))).filter(
-    (m) => m.aggregation !== "ratio",
-  );
+  const roleMetrics = await db.select().from(kpiMetrics).where(eq(kpiMetrics.role, role));
+  const metrics = roleMetrics.filter((m) => m.aggregation !== "ratio");
   const values: { metricId: number; value: number }[] = [];
   for (const m of metrics) {
     const raw = String(formData.get(`metric_${m.key}`) ?? "").replace(/[^\d.,-]/g, "").replace(/,/g, "");
@@ -85,7 +89,16 @@ export async function saveReport(_: FormState, formData: FormData): Promise<Form
         .returning({ id: dailyReports.id });
       id = row!.id;
     }
-    await tx.delete(kpiEntries).where(eq(kpiEntries.reportId, id));
+    // Replace this role's numbers only; a dual-role member's other part stays.
+    await tx.delete(kpiEntries).where(
+      and(
+        eq(kpiEntries.reportId, id),
+        inArray(
+          kpiEntries.metricId,
+          roleMetrics.map((m) => m.id),
+        ),
+      ),
+    );
     if (values.length) {
       await tx.insert(kpiEntries).values(values.map((v) => ({ ...v, reportId: id, userId: user.id, date })));
     }
@@ -124,13 +137,13 @@ export async function reviewReport(_: FormState, formData: FormData): Promise<Fo
   if (decision === "revision" && !note) return { error: "Tell the member what needs to be revised." };
 
   const [target] = await db
-    .select({ role: users.role })
+    .select({ role: users.role, secondaryRole: users.secondaryRole })
     .from(dailyReports)
     .innerJoin(users, eq(users.id, dailyReports.userId))
     .where(eq(dailyReports.id, reportId))
     .limit(1);
   if (!target) return { error: "Report not found." };
-  if (target.role === "advertiser") {
+  if (!needsReview(target)) {
     return { error: "Laporan advertiser langsung tercatat dan tidak memerlukan approval." };
   }
 
@@ -159,12 +172,12 @@ export async function approveReports(ids: number[]) {
   if (user.role !== "supervisor" || ids.length === 0) return;
   for (const id of ids) {
     const [target] = await db
-      .select({ role: users.role })
+      .select({ role: users.role, secondaryRole: users.secondaryRole })
       .from(dailyReports)
       .innerJoin(users, eq(users.id, dailyReports.userId))
       .where(eq(dailyReports.id, id))
       .limit(1);
-    if (!target || target.role === "advertiser") continue;
+    if (!target || !needsReview(target)) continue;
 
     const [report] = await db
       .update(dailyReports)

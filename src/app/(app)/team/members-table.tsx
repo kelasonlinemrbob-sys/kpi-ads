@@ -7,8 +7,8 @@ import { EllipsisVerticalIcon, GaugeIcon, PencilIcon, PowerIcon, UsersIcon } fro
 import { toast } from "sonner";
 import { setMemberActive } from "@/actions/team";
 import type { KpiStatus } from "@/lib/kpi";
-import { ROLE_BADGE, roleLabel } from "@/lib/roles";
-import { formatNumber } from "@/lib/utils";
+import { ROLE_BADGE, ROLE_LABEL, roleLabel } from "@/lib/roles";
+import { cn, formatNumber } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -59,6 +59,11 @@ export function MembersTable({ rows }: { rows: MemberRow[] }) {
                   <Badge variant="outline" className={ROLE_BADGE[m.role]}>
                     {roleLabel(m.role, m.advertiserLevel)}
                   </Badge>
+                  {m.secondaryRole && (
+                    <Badge variant="outline" className={cn("ml-1", ROLE_BADGE[m.secondaryRole])}>
+                      + {ROLE_LABEL[m.secondaryRole]} {m.secondaryShare}%
+                    </Badge>
+                  )}
                   {m.title && <span className="mt-1 block text-xs text-muted-foreground">{m.title}</span>}
                 </TableCell>
                 <TableCell>

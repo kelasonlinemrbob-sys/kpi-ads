@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import type { AdvertiserLevel, Role } from "@/db/schema";
 import { saveTask } from "@/actions/tasks";
 import { PRIORITY_LABEL } from "@/lib/labels";
-import { roleLabel } from "@/lib/roles";
+import { ROLE_LABEL, roleLabel } from "@/lib/roles";
 import { assignRuleHint, categoriesFor, type TaskPerson } from "@/lib/task-rules";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -18,7 +18,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import type { TaskCard } from "./task-board";
 
-export type Person = { id: number; name: string; role: Role; advertiserLevel: AdvertiserLevel | null; assignable: boolean };
+export type Person = {
+  id: number;
+  name: string;
+  role: Role;
+  advertiserLevel: AdvertiserLevel | null;
+  secondaryRole: Role | null;
+  assignable: boolean;
+};
 
 export function TaskDialog({
   currentUser,
@@ -109,6 +116,7 @@ export function TaskDialog({
                   {options.map((p) => (
                     <SelectItem key={p.id} value={String(p.id)}>
                       {p.id === currentUser.id ? `${p.name} (saya)` : p.name} · {roleLabel(p.role, p.advertiserLevel)}
+                      {p.secondaryRole ? ` + ${ROLE_LABEL[p.secondaryRole]}` : ""}
                     </SelectItem>
                   ))}
                 </SelectContent>

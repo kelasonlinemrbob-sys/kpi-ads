@@ -37,6 +37,10 @@ export const users = pgTable("users", {
   role: roleEnum("role").notNull(),
   /** Advertisers only; null counts as junior. */
   advertiserLevel: advertiserLevelEnum("advertiser_level"),
+  /** Optional second job (e.g. an advertiser who also does SEO); KPI and reports cover both roles. */
+  secondaryRole: roleEnum("secondary_role"),
+  /** Share of the combined KPI score that comes from the secondary role (the primary gets the rest). */
+  secondaryShare: integer("secondary_share").notNull().default(40),
   title: varchar("title", { length: 120 }),
   isActive: boolean("is_active").notNull().default(true),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),

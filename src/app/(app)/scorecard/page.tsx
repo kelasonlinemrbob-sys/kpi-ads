@@ -6,7 +6,8 @@ import type { Role } from "@/db/schema";
 import { db } from "@/db";
 import { dailyReports } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
-import { getEntries, getMembers, getMetrics, getScorecards } from "@/lib/data";
+import { getEntries, getMembers, getMetrics, getScorecards, scoreForRole, type Scorecard } from "@/lib/data";
+import { hasRole, hasSecondRole, needsReview, reportsMondayToFriday, roleSlots } from "@/lib/member-roles";
 import {
   aggregate,
   comparableRange,
@@ -16,11 +17,12 @@ import {
   periodAsOf,
   periodRange,
   shiftPeriod,
+  statusOf,
   todayISO,
   workingDays,
 } from "@/lib/kpi";
 import { resolvePeriod } from "@/lib/period";
-import { ROLE_LABEL } from "@/lib/roles";
+import { ROLE_LABEL, rolesLabel } from "@/lib/roles";
 import { cn, formatNumber, parseISODate } from "@/lib/utils";
 import { KpiBreakdownTable } from "@/components/dashboard/kpi-breakdown";
 import { KpiStatusLabel } from "@/components/dashboard/kpi-status";
@@ -30,6 +32,7 @@ import { PeriodSelect } from "@/components/dashboard/period-select";
 import { TrendChart } from "@/components/dashboard/trend-chart";
 import { UrlSelect } from "@/components/dashboard/url-select";
 import { UserAvatar } from "@/components/user-avatar";
+import { TabLink } from "../campaigns/ad-campaigns-table";
 
 export const metadata: Metadata = { title: "KPI Scorecard" };
 
@@ -37,11 +40,21 @@ export default async function ScorecardPage({ searchParams }: { searchParams: Pr
   const user = await requireUser();
   const sp = await searchParams;
   const { period, options } = resolvePeriod(sp.period);
-  const members = user.role === "supervisor" ? await getMembers() : [];
+  const allMembers = await getMembers();
+  const members = user.role === "supervisor" ? allMembers : [];
   const target =
     user.role === "supervisor"
       ? (members.find((m) => m.id === Number(sp.user)) ?? members[0])
-      : { id: user.id, name: user.name, email: user.email, role: user.role, title: user.title };
+      : {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          title: user.title,
+          advertiserLevel: user.advertiserLevel,
+          secondaryRole: user.secondaryRole,
+          secondaryShare: user.secondaryShare,
+        };
 
   const memberPicker =
     user.role === "supervisor" && members.length > 0 ? (
@@ -49,7 +62,10 @@ export default async function ScorecardPage({ searchParams }: { searchParams: Pr
         param="user"
         label="Member"
         value={String(target?.id)}
-        options={members.map((m) => ({ value: String(m.id), label: `${m.name} · ${ROLE_LABEL[m.role]}` }))}
+        options={members.map((m) => ({
+          value: String(m.id),
+          label: `${m.name} · ${ROLE_LABEL[m.role]}${hasSecondRole(m) ? ` + ${ROLE_LABEL[m.secondaryRole]}` : ""}`,
+        }))}
         icon={<UserIcon className="size-4 text-foreground/70" />}
       />
     ) : null;
@@ -63,11 +79,18 @@ export default async function ScorecardPage({ searchParams }: { searchParams: Pr
     );
   }
 
+  // A dual-role member gets a combined view plus one view per role (?role=).
+  const slots = roleSlots(target);
+  const dual = slots.length > 1;
+  const view: Role | "all" = dual ? (slots.find((s) => s.role === sp.role)?.role ?? "all") : target.role;
+  const peerRole = view === "all" ? target.role : view;
+  const scoreOf = (c: Scorecard) => (view === "all" ? c.score : scoreForRole(c, view));
+
   const asOf = periodAsOf(period);
   const { start, end } = periodRange(period);
   const prev = comparableRange(period, asOf);
   const dates = datesBetween(start, asOf);
-  const peers = user.role === "supervisor" ? members.filter((m) => m.role === target.role) : (await getMembers()).filter((m) => m.role === target.role);
+  const peers = allMembers.filter((m) => hasRole(m, peerRole));
   const [metrics, peerCards, entries, prevEntries, reports] = await Promise.all([
     getMetrics(),
     getScorecards(period, peers.some((p) => p.id === target.id) ? peers : [...peers, target]),
@@ -79,30 +102,39 @@ export default async function ScorecardPage({ searchParams }: { searchParams: Pr
       .where(and(eq(dailyReports.userId, target.id), gte(dailyReports.date, start), lte(dailyReports.date, end))),
   ]);
   const card = peerCards.find((c) => c.member.id === target.id)!;
+  const roleScore = view === "all" ? null : card.roleScores.find((r) => r.role === view)!;
+  const score = scoreOf(card);
+  const prevScore = roleScore ? roleScore.prevScore : card.prevScore;
+  const results = roleScore ? roleScore.results : card.results;
   // Score of the five months before, for the 6-month trend (months without reports stay empty).
   const history = [
     ...(await Promise.all(
       [5, 4, 3, 2, 1].map(async (back) => {
         const month = shiftPeriod(period, -back);
         const [c] = await getScorecards(month, [card.member]);
-        return { period: month, score: c && c.reportsCount > 0 ? c.score : null };
+        return { period: month, score: c && c.reportsCount > 0 ? scoreOf(c) : null };
       }),
     )),
-    { period, score: card.score },
+    { period, score },
   ];
-  const ranked = [...peerCards].sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+  const ranked = [...peerCards].sort((a, b) => (scoreOf(b) ?? -1) - (scoreOf(a) ?? -1));
   const rank = ranked.findIndex((c) => c.member.id === target.id) + 1;
   const byKey = new Map(metrics.map((m) => [m.key, m]));
-  const roleMetrics = metrics.filter((m) => m.role === target.role);
-  const expected = workingDays(start, asOf, target.role === "advertiser");
-  const delta = pctDelta(card.score, card.prevScore);
+  const viewRoles = view === "all" ? slots.map((s) => s.role) : [view];
+  const viewMetrics = metrics.filter((m) => viewRoles.includes(m.role));
+  const expected = workingDays(start, asOf, reportsMondayToFriday(target));
+  const delta = pctDelta(score, prevScore);
   const days = periodRange(period).days;
-  const weighted = card.results
-    .filter((r) => r.metric.weight > 0 && r.achievement !== null)
-    .sort((a, b) => a.achievement! - b.achievement!);
+  const weighted = results.filter((r) => r.metric.weight > 0 && r.achievement !== null).sort((a, b) => a.achievement! - b.achievement!);
   const weakest = weighted[0];
   const strongest = weighted.length > 1 ? weighted[weighted.length - 1] : undefined;
   const resultByKey = new Map(card.results.map((r) => [r.metric.key, r]));
+  const tabHref = (role: string | null) => {
+    const params = new URLSearchParams(Object.entries(sp).filter(([k, v]) => v !== undefined && k !== "role") as [string, string][]);
+    if (role) params.set("role", role);
+    const qs = params.toString();
+    return qs ? `/scorecard?${qs}` : "/scorecard";
+  };
 
   return (
     <>
@@ -117,6 +149,24 @@ export default async function ScorecardPage({ searchParams }: { searchParams: Pr
         }
       />
 
+      {dual && (
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <div className="inline-flex rounded-lg bg-muted p-1">
+            <TabLink href={tabHref(null)} active={view === "all"}>
+              Gabungan
+            </TabLink>
+            {slots.map((slot) => (
+              <TabLink key={slot.role} href={tabHref(slot.role)} active={view === slot.role}>
+                {ROLE_LABEL[slot.role]} <span className="text-xs text-muted-foreground">{slot.share}%</span>
+              </TabLink>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Skor total = {slots.map((s) => `${s.share}% ${ROLE_LABEL[s.role]}`).join(" + ")}
+          </p>
+        </div>
+      )}
+
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] 2xl:grid-cols-[360px_minmax(0,1fr)_minmax(0,1fr)]">
         <Panel title="Member" icon={UserIcon}>
           <div className="flex items-center gap-3 p-4">
@@ -124,13 +174,14 @@ export default async function ScorecardPage({ searchParams }: { searchParams: Pr
             <div className="min-w-0">
               <p className="truncate text-lg font-medium">{target.name}</p>
               <p className="truncate text-sm text-muted-foreground">
-                {target.title && target.title !== ROLE_LABEL[target.role] ? `${target.title} · ${ROLE_LABEL[target.role]}` : ROLE_LABEL[target.role]}
+                {target.title && target.title !== ROLE_LABEL[target.role] ? `${target.title} · ` : ""}
+                {rolesLabel(target)}
               </p>
             </div>
           </div>
           <div className="grid grid-cols-2 border-t">
             <div className="border-r p-4">
-              <p className="text-xs text-muted-foreground">Rank in role</p>
+              <p className="text-xs text-muted-foreground">Rank {dual ? ROLE_LABEL[peerRole] : "in role"}</p>
               <p className="mt-1 text-xl font-medium tabular-nums">
                 #{rank} <span className="text-sm font-normal text-muted-foreground">of {peerCards.length}</span>
               </p>
@@ -144,10 +195,14 @@ export default async function ScorecardPage({ searchParams }: { searchParams: Pr
           </div>
           {ranked.length > 1 && (
             <div className="border-t px-4 py-3">
-              <p className="mb-2 text-[11px] text-muted-foreground">Peringkat {ROLE_LABEL[target.role]}</p>
+              <p className="mb-2 text-[11px] text-muted-foreground">
+                Peringkat {ROLE_LABEL[peerRole]}
+                {view === "all" && dual ? " (skor total)" : ""}
+              </p>
               <ol className="grid gap-2">
                 {ranked.slice(0, 5).map((c, i) => {
                   const me = c.member.id === target.id;
+                  const value = scoreOf(c);
                   return (
                     <li key={c.member.id} className={cn("grid grid-cols-[1.25rem_minmax(0,7rem)_1fr_2.5rem] items-center gap-2 text-sm", !me && "text-muted-foreground")}>
                       <span className="tabular-nums">{i + 1}</span>
@@ -155,36 +210,53 @@ export default async function ScorecardPage({ searchParams }: { searchParams: Pr
                       <span className="block h-1.5 overflow-hidden rounded-full bg-muted">
                         <span
                           className="block h-full rounded-full"
-                          style={{ width: `${Math.min(100, ((c.score ?? 0) / 120) * 100)}%`, backgroundColor: me ? "var(--foreground)" : "var(--bar-hit)" }}
+                          style={{ width: `${Math.min(100, ((value ?? 0) / 120) * 100)}%`, backgroundColor: me ? "var(--foreground)" : "var(--bar-hit)" }}
                         />
                       </span>
-                      <span className={cn("text-right tabular-nums", me && "font-medium text-foreground")}>{c.score === null ? "–" : formatNumber(c.score, 0)}</span>
+                      <span className={cn("text-right tabular-nums", me && "font-medium text-foreground")}>{value === null ? "–" : formatNumber(value, 0)}</span>
                     </li>
                   );
                 })}
               </ol>
               {rank > 5 && (
                 <p className="mt-2 text-xs text-muted-foreground">
-                  … {target.name} di posisi #{rank} ({card.score === null ? "–" : formatNumber(card.score, 0)})
+                  … {target.name} di posisi #{rank} ({score === null ? "–" : formatNumber(score, 0)})
                 </p>
               )}
             </div>
           )}
         </Panel>
 
-        <Panel title="KPI Score" icon={GaugeIcon}>
+        <Panel title={view === "all" && dual ? "KPI Score (total)" : dual ? `KPI Score ${ROLE_LABEL[view as Role]}` : "KPI Score"} icon={GaugeIcon}>
           <div className="grid gap-4 p-4">
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              <p className="text-5xl leading-none font-semibold tracking-tight">{card.score === null ? "–" : formatNumber(card.score, 1)}</p>
+              <p className="text-5xl leading-none font-semibold tracking-tight">{score === null ? "–" : formatNumber(score, 1)}</p>
               <MonoDelta delta={delta} />
             </div>
             <div className="grid gap-1.5">
-              <MonoMeter value={card.score} />
+              <MonoMeter value={score} />
               <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <KpiStatusLabel status={card.status} mono className="text-foreground" />
+                <KpiStatusLabel status={statusOf(score)} mono className="text-foreground" />
                 <span>garis = 100 (tepat target)</span>
               </div>
             </div>
+            {view === "all" && dual && (
+              <dl className="grid grid-cols-2 gap-3 border-t pt-3 text-sm">
+                {card.roleScores.map((r) => (
+                  <div key={r.role} className="min-w-0">
+                    <dt className="text-[11px] text-muted-foreground">
+                      {ROLE_LABEL[r.role]} · {r.share}%
+                    </dt>
+                    <dd className="font-medium tabular-nums">
+                      {r.score === null ? "–" : formatNumber(r.score, 1)}
+                      {r.score !== null && (
+                        <span className="font-normal text-muted-foreground"> → {formatNumber((r.score * r.share) / 100, 1)} poin</span>
+                      )}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            )}
             {(weakest || strongest) && (
               <dl className="grid grid-cols-2 gap-3 border-t pt-3 text-sm">
                 {strongest && (
@@ -210,19 +282,26 @@ export default async function ScorecardPage({ searchParams }: { searchParams: Pr
         </Panel>
 
         <Panel title="Reporting Calendar" icon={CalendarCheckIcon} className="lg:col-span-2 2xl:col-span-1">
-          <ReportCalendar start={start} end={end} reports={reports} role={target.role} />
+          <ReportCalendar
+            start={start}
+            end={end}
+            reports={reports}
+            noReview={!needsReview(target)}
+            mondayToFriday={reportsMondayToFriday(target)}
+          />
         </Panel>
       </div>
 
       <div className="mt-3 grid gap-3">
         <TrendChart
+          key={view}
           title="Daily Trend"
-          defaultKey={roleMetrics.find((m) => m.weight > 0 && m.aggregation !== "ratio")?.key}
-          series={roleMetrics.map((m) => {
+          defaultKey={viewMetrics.find((m) => m.weight > 0 && m.aggregation !== "ratio")?.key}
+          series={viewMetrics.map((m) => {
             const total = aggregate(m, entries, byKey);
             return {
               key: m.key,
-              label: m.name,
+              label: view === "all" && dual ? `${m.name} · ${ROLE_LABEL[m.role]}` : m.name,
               unit: m.unit,
               higherIsBetter: m.higherIsBetter,
               total,
@@ -233,9 +312,24 @@ export default async function ScorecardPage({ searchParams }: { searchParams: Pr
             };
           })}
         />
-        <Panel title="KPI Breakdown" icon={GaugeIcon} iconPosition="left" bodyClassName="p-1.5">
-          <KpiBreakdownTable results={card.results} mono />
-        </Panel>
+        {view === "all" && dual ? (
+          card.roleScores.map((r) => (
+            <Panel
+              key={r.role}
+              title={`KPI Breakdown · ${ROLE_LABEL[r.role]} ${r.share}%`}
+              icon={GaugeIcon}
+              iconPosition="left"
+              bodyClassName="p-1.5"
+            >
+              {/* Points are scaled by the role's share, so all tables together add up to the total score. */}
+              <KpiBreakdownTable results={r.results} mono pointScale={r.share / 100} />
+            </Panel>
+          ))
+        ) : (
+          <Panel title="KPI Breakdown" icon={GaugeIcon} iconPosition="left" bodyClassName="p-1.5">
+            <KpiBreakdownTable results={results} mono />
+          </Panel>
+        )}
       </div>
     </>
   );
@@ -304,17 +398,31 @@ const CAL_STYLE: Record<CalStatus, { className: string; style?: React.CSSPropert
   },
 };
 
-function ReportCalendar({ start, end, reports, role }: { start: string; end: string; reports: { id: number; date: string; status: CalStatus }[]; role: Role }) {
+function ReportCalendar({
+  start,
+  end,
+  reports,
+  noReview,
+  mondayToFriday,
+}: {
+  start: string;
+  end: string;
+  reports: { id: number; date: string; status: CalStatus }[];
+  /** Advertiser-only members: a submitted report is done (no review). */
+  noReview: boolean;
+  /** Advertiser-only members report Monday–Friday. */
+  mondayToFriday: boolean;
+}) {
   const today = todayISO();
-  const advertiser = role === "advertiser";
+  const advertiser = noReview;
   const byDate = new Map(reports.map((r) => [r.date, r]));
   const lead = (parseISODate(start).getDay() + 6) % 7; // Monday-first grid
   const days = datesBetween(start, end);
-  // Advertiser reports are not reviewed: a submitted report is done, and they report Monday–Friday.
+  // Reports that are not reviewed: a submitted one is done.
   const style = (status: CalStatus) => CAL_STYLE[advertiser && status === "submitted" ? "approved" : status];
   const offDay = (d: string) => {
     const day = parseISODate(d).getDay();
-    return day === 0 || (advertiser && day === 6);
+    return day === 0 || (mondayToFriday && day === 6);
   };
   const missed = days.filter((d) => d < today && !offDay(d) && !byDate.has(d)).length;
   const revisions = reports.filter((r) => r.status === "revision").length;

@@ -1,11 +1,12 @@
 import type { AdvertiserLevel, Role, Task } from "@/db/schema";
+import { hasRole, memberRoles } from "@/lib/member-roles";
 
 /**
  * Who may give tasks to whom, what kind of work each role gets, and who closes a task.
  * Shared by the server actions (enforcement) and the task dialog / board (what to offer).
  */
 
-export type TaskPerson = { id: number; role: Role; advertiserLevel?: AdvertiserLevel | null };
+export type TaskPerson = { id: number; role: Role; advertiserLevel?: AdvertiserLevel | null; secondaryRole?: Role | null };
 
 const isSenior = (p: TaskPerson) => p.role === "advertiser" && p.advertiserLevel === "senior";
 const isJunior = (p: TaskPerson) => p.role === "advertiser" && p.advertiserLevel !== "senior";
@@ -18,12 +19,15 @@ const isJunior = (p: TaskPerson) => p.role === "advertiser" && p.advertiserLevel
  */
 export function canAssign(actor: TaskPerson, assignee: TaskPerson) {
   if (actor.role === "supervisor" || actor.id === assignee.id) return true;
-  if (assignee.role === "supervisor") return false;
-  if (actor.role === "advertiser") {
-    if (assignee.role === "webmaster" || assignee.role === "seo") return true;
-    return isSenior(actor) && isJunior(assignee);
-  }
-  return assignee.role === "webmaster" || assignee.role === "seo";
+  // A dual-role member gives and receives work in either of their roles.
+  return memberRoles(actor).some((actorRole) => memberRoles(assignee).some((assigneeRole) => roleMayAssign(actor, actorRole, assignee, assigneeRole)));
+}
+
+function roleMayAssign(actor: TaskPerson, actorRole: Role, assignee: TaskPerson, assigneeRole: Role) {
+  if (assigneeRole === "supervisor") return false;
+  if (assigneeRole === "webmaster" || assigneeRole === "seo") return true;
+  // Advertiser work: only a senior advertiser to a junior (mentoring).
+  return actorRole === "advertiser" && assigneeRole === "advertiser" && isSenior(actor) && isJunior(assignee);
 }
 
 /** One line for the dialog explaining the rule above to the current user. */
@@ -102,7 +106,7 @@ export const categoryLabel = (key: string | null) => (key ? (CATEGORY_BY_KEY.get
 /** Kinds of work that fit the assignee's role. */
 export function categoriesFor(assignee: TaskPerson | undefined) {
   if (!assignee) return TASK_CATEGORIES.filter((c) => !c.roles.length);
-  return TASK_CATEGORIES.filter((c) => !c.roles.length || (c.roles.includes(assignee.role) && (!c.seniorOnly || isSenior(assignee))));
+  return TASK_CATEGORIES.filter((c) => !c.roles.length || (c.roles.some((r) => hasRole(assignee, r)) && (!c.seniorOnly || isSenior(assignee))));
 }
 
 export const categoryFits = (key: string, assignee: TaskPerson) => categoriesFor(assignee).some((c) => c.key === key);

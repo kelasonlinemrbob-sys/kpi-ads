@@ -9,6 +9,7 @@ import { advertiserReportItems, dailyReports, kpiEntries, users, waOutbox, waSes
 import { requireUser } from "@/lib/auth";
 import { getItemCampaigns, getMetrics } from "@/lib/data";
 import { aggregate, todayISO, type Entry } from "@/lib/kpi";
+import { memberRoles, needsReview } from "@/lib/member-roles";
 import { ROLE_LABEL } from "@/lib/roles";
 import { addDays, cn, formatDate, formatValue } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -28,7 +29,7 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
   if (!Number.isInteger(id)) notFound();
 
   const [row] = await db
-    .select({ report: dailyReports, member: { id: users.id, name: users.name, role: users.role, title: users.title }, reviewerName: reviewer.name })
+    .select({ report: dailyReports, member: { id: users.id, name: users.name, role: users.role, secondaryRole: users.secondaryRole, title: users.title }, reviewerName: reviewer.name })
     .from(dailyReports)
     .innerJoin(users, eq(users.id, dailyReports.userId))
     .leftJoin(reviewer, eq(reviewer.id, dailyReports.reviewerId))
@@ -50,10 +51,12 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
       .limit(1),
   ]);
   const itemCampaigns = await getItemCampaigns(advertiserItems.map((item) => item.id));
-  const roleMetrics = metrics.filter((m) => m.role === member.role);
+  const roles = memberRoles(member);
+  // Roles reported as plain KPI numbers (an advertiser's part is the product table instead).
+  const numberRoles = roles.filter((r) => r !== "advertiser" || advertiserItems.length === 0);
   const byKey = new Map(metrics.map((m) => [m.key, m]));
   const asEntries: Entry[] = entries.map((e) => ({ userId: e.userId, metricId: e.metricId, date: e.date, value: e.value }));
-  const requiresReview = member.role !== "advertiser";
+  const requiresReview = needsReview(member);
   const canEdit = user.id === report.userId && (!requiresReview || report.status !== "approved") && report.date >= addDays(todayISO(), -7);
 
   return (
@@ -95,26 +98,34 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
 
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="grid min-w-0 content-start gap-3">
-          {member.role === "advertiser" && advertiserItems.length > 0 ? (
+          {roles.includes("advertiser") && advertiserItems.length > 0 && (
             <AdvertiserReportDetail
               reportDate={report.date}
               items={advertiserItems.map((item) => ({ ...item, campaigns: itemCampaigns.get(item.id) ?? [] }))}
             />
-          ) : (
-            <Panel title="Reported Numbers" icon={CalculatorIcon} iconPosition="left">
+          )}
+          {numberRoles.map((role) => (
+            <Panel
+              key={role}
+              title={roles.length > 1 ? `Angka KPI ${ROLE_LABEL[role]}` : "Reported Numbers"}
+              icon={CalculatorIcon}
+              iconPosition="left"
+            >
               <dl className="grid grid-cols-2 divide-x divide-y sm:grid-cols-3 [&>div]:border-border">
-                {roleMetrics.map((m) => {
-                  const v = aggregate(m, asEntries, byKey);
-                  return (
-                    <div key={m.id} className="p-4">
-                      <dt className="text-sm text-muted-foreground">{m.name}</dt>
-                      <dd className="mt-1.5 text-2xl font-medium tabular-nums">{v === null ? "–" : formatValue(v, m.unit)}</dd>
-                    </div>
-                  );
-                })}
+                {metrics
+                  .filter((m) => m.role === role)
+                  .map((m) => {
+                    const v = aggregate(m, asEntries, byKey);
+                    return (
+                      <div key={m.id} className="p-4">
+                        <dt className="text-sm text-muted-foreground">{m.name}</dt>
+                        <dd className="mt-1.5 text-2xl font-medium tabular-nums">{v === null ? "–" : formatValue(v, m.unit)}</dd>
+                      </div>
+                    );
+                  })}
               </dl>
             </Panel>
-          )}
+          ))}
           <Panel
             title={advertiserItems.length > 0 ? "Catatan" : "Activity Summary"}
             icon={ClipboardListIcon}
@@ -122,7 +133,7 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
             bodyClassName="grid gap-4 p-4 text-sm"
           >
             <Section label={advertiserItems.length > 0 ? "Catatan laporan" : "What was done"}>{report.summary}</Section>
-            {advertiserItems.length === 0 && (
+            {(advertiserItems.length === 0 || report.blockers || report.planTomorrow) && (
               <>
                 <Section label="Blockers">{report.blockers}</Section>
                 <Section label="Plan for tomorrow">{report.planTomorrow}</Section>

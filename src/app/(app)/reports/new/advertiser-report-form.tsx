@@ -100,7 +100,10 @@ export function AdvertiserReportForm({
   campaigns: initialCampaigns,
   existing,
   existingItems,
+  dualRole = false,
 }: {
+  /** Member also holds another role: keep ?role= in the URL when switching dates. */
+  dualRole?: boolean;
   date: string;
   minDate: string;
   maxDate: string;
@@ -248,6 +251,7 @@ export function AdvertiserReportForm({
       className="grid gap-5"
     >
       <input type="hidden" name="advertiserItems" value={JSON.stringify(payload)} />
+      <input type="hidden" name="role" value="advertiser" />
 
       {/* Toolbar: tanggal · periode · generate */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -259,7 +263,7 @@ export function AdvertiserReportForm({
           defaultValue={date}
           min={minDate}
           max={maxDate}
-          onChange={(event) => event.target.value && router.replace(`/reports/new?date=${event.target.value}`)}
+          onChange={(event) => event.target.value && router.replace(`/reports/new?date=${event.target.value}${dualRole ? "&role=advertiser" : ""}`)}
           className="sm:w-40"
           required
         />

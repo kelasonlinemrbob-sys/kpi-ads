@@ -25,12 +25,16 @@ type MetricField = {
 };
 
 export function ReportForm({
+  role,
+  dualRole = false,
   date,
   minDate,
   maxDate,
   metrics,
   existing,
 }: {
+  role: string;
+  dualRole?: boolean;
   date: string;
   minDate: string;
   maxDate: string;
@@ -49,6 +53,7 @@ export function ReportForm({
 
   return (
     <form action={action} className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_380px]">
+      <input type="hidden" name="role" value={role} />
       <div className="grid min-w-0 gap-3">
         {existing?.status === "revision" && (
           <div className="flex gap-3 rounded-xl border border-destructive/25 bg-destructive/5 p-4 text-sm">
@@ -76,7 +81,7 @@ export function ReportForm({
               defaultValue={date}
               min={minDate}
               max={maxDate}
-              onChange={(e) => e.target.value && router.replace(`/reports/new?date=${e.target.value}`)}
+              onChange={(e) => e.target.value && router.replace(`/reports/new?date=${e.target.value}${dualRole ? `&role=${role}` : ""}`)}
               required
             />
           </div>
