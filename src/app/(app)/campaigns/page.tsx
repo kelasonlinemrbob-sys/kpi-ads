@@ -20,6 +20,7 @@ import {
   users,
 } from "@/db/schema";
 import { matchProduct } from "@/lib/ads-matching";
+import { getMetaConnectionStatus } from "@/lib/meta-connection";
 import { requireUser } from "@/lib/auth";
 import { getMembers } from "@/lib/data";
 import { todayISO } from "@/lib/kpi";
@@ -50,7 +51,7 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
   if (status) where.push(eq(campaigns.status, status));
   if (owner) where.push(eq(campaigns.ownerId, owner));
 
-  const [productRows, advertisers, allProducts, accountRows, adCampaignRows, performanceRows] = await Promise.all([
+  const [productRows, advertisers, allProducts, accountRows, adCampaignRows, performanceRows, metaStatus] = await Promise.all([
     db
       .select({ campaign: campaigns, ownerName: users.name })
       .from(campaigns)
@@ -78,6 +79,7 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
       .innerJoin(advertiserReportItems, eq(advertiserReportItems.id, advertiserReportItemCampaigns.itemId))
       .where(and(eq(advertiserReportItems.window, "previous_day"), gte(advertiserReportItems.performanceDate, monthStart)))
       .groupBy(advertiserReportItems.platform, advertiserReportItemCampaigns.externalId),
+    getMetaConnectionStatus(),
   ]);
 
   const accountOptions = accountRows.map(({ id, platform, name, accountId }) => ({ id, platform, name, accountId }));
@@ -172,6 +174,8 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
                 deletableIds={accountRows
                   .filter((a) => user.role === "supervisor" || a.createdById === user.id)
                   .map((a) => a.id)}
+                syncErrors={Object.fromEntries(syncErrors.map((a) => [a.id, a.lastSyncError!]))}
+                metaStatus={metaStatus}
               />
             )}
             {canEdit && tab === "ads" && <SyncButton disabled={accountRows.length === 0} />}

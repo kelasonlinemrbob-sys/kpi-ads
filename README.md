@@ -86,9 +86,19 @@ src/
   2. Di tiap campaign/product, pilih akun iklannya dan isi **kode product**, mis. `SERUM`.
   3. Nama campaign di Ads Manager / Google Ads harus mengandung kode itu, mis. `[SERUM] Retargeting 30D`.
   Saat advertiser klik *Generate dari Ads*, semua campaign di akun dijumlahkan per product (kode terpanjang menang bila
-  lebih dari satu cocok). Campaign ber-spend tanpa kode ditampilkan sebagai *belum terpetakan*. Kredensial `META_*` /
-  `GOOGLE_ADS_*` diset di `.env` (lihat `.env.example`). Tanggal mengikuti zona waktu akun iklan; untuk "hari ini"
+  lebih dari satu cocok). Campaign ber-spend tanpa kode ditampilkan sebagai *belum terpetakan*. Token Meta diisi supervisor
+  di **Settings → Koneksi Meta Ads** (lihat di bawah); kredensial `GOOGLE_ADS_*` diset di `.env` (lihat `.env.example`). Tanggal mengikuti zona waktu akun iklan; untuk "hari ini"
   angkanya adalah data sampai saat tombol diklik.
+- **Koneksi Meta Ads** (Settings, supervisor): tempel access token lalu *Simpan & tes*. Token divalidasi ke Meta
+  (pemilik, izin `ads_read`, masa berlaku), disimpan terenkripsi (kunci dari `AUTH_SECRET`), dan daftar akun iklan yang
+  bisa dibaca token langsung tampil dengan tombol *Tambahkan*. Panduan langkah demi langkah ada di kartu itu.
+  Agar tidak kedaluwarsa, pakai token **System User** (Pengaturan bisnis → Pengguna sistem → assign akun iklan +
+  aplikasi → Buat token, masa berlaku *Tidak pernah*, izin `ads_read`). Token user dari Graph API Explorer (1–2 jam)
+  otomatis ditukar menjadi token ±60 hari bila App ID + App Secret diisi. Aplikasi memperingatkan 14 hari sebelum token
+  kedaluwarsa. `META_ACCESS_TOKEN` di `.env` tetap dipakai sebagai cadangan. Mengganti `AUTH_SECRET` berarti token
+  harus ditempel ulang.
+- Saat akun Meta ditambahkan, aplikasi mengecek bahwa token bisa membaca akun itu (ID salah / belum di-assign ke
+  System User langsung ditolak dengan pesan yang jelas).
 - Rincian per campaign dari hasil generate ikut disimpan saat laporan dikirim (`advertiser_report_item_campaigns`) dan
   bisa dibuka di halaman detail laporan dengan klik baris product. Kalau angka product diubah manual, rinciannya
   tidak disimpan karena sudah tidak cocok dengan totalnya.

@@ -330,6 +330,14 @@ export const waWorker = pgTable("wa_worker", {
   heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull(),
 });
 
+/** App-wide key/value settings, e.g. the Meta Ads connection. Secrets are stored encrypted (see lib/secret-box). */
+export const appSettings = pgTable("app_settings", {
+  key: varchar("key", { length: 80 }).primaryKey(),
+  value: text("value").notNull(),
+  updatedById: integer("updated_by_id").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type User = typeof users.$inferSelect;
 export type WaSession = typeof waSessions.$inferSelect;
 export type Role = (typeof roleEnum.enumValues)[number];

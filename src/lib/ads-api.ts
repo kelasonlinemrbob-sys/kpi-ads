@@ -1,8 +1,10 @@
 import "server-only";
+import { getMetaToken, META_API_VERSION, META_TOKEN_MISSING, metaErrorMessage, type MetaApiError } from "@/lib/meta-connection";
 
 /**
  * Pulls one day of campaign-level metrics for a whole ad account from the Meta Marketing API
- * or the Google Ads API. Credentials come from env (see .env.example). Dates are interpreted
+ * or the Google Ads API. The Meta token is set in Settings → Koneksi Meta Ads (or META_ACCESS_TOKEN);
+ * Google credentials come from env (see .env.example). Dates are interpreted
  * in the ad account's own timezone.
  */
 
@@ -39,9 +41,9 @@ type MetaInsight = {
 };
 
 async function fetchMetaAccount(accountId: string, date: string): Promise<AdsAccountResult> {
-  const token = process.env.META_ACCESS_TOKEN;
-  if (!token) return { ok: false, error: "META_ACCESS_TOKEN belum diset." };
-  const version = process.env.META_API_VERSION ?? "v24.0";
+  const token = await getMetaToken();
+  if (!token) return { ok: false, error: META_TOKEN_MISSING };
+  const version = META_API_VERSION;
   const url = new URL(`https://graph.facebook.com/${version}/act_${digits(accountId)}/insights`);
   url.searchParams.set("level", "campaign");
   url.searchParams.set("fields", "campaign_id,campaign_name,spend,impressions,inline_link_clicks,actions");
@@ -57,9 +59,9 @@ async function fetchMetaAccount(accountId: string, date: string): Promise<AdsAcc
       const body = (await res.json()) as {
         data?: MetaInsight[];
         paging?: { next?: string };
-        error?: { message?: string };
+        error?: MetaApiError;
       };
-      if (!res.ok || body.error) return { ok: false, error: body.error?.message ?? `Meta API error ${res.status}` };
+      if (!res.ok || body.error) return { ok: false, error: metaErrorMessage(body.error, res.status) };
       for (const row of body.data ?? []) {
         // The first configured action type that is present wins, so overlapping lead types aren't double-counted.
         const lead = META_LEAD_ACTIONS.map((type) => row.actions?.find((a) => a.action_type === type)).find(Boolean);
@@ -191,15 +193,15 @@ function metaStatus(effective: string): AdsCampaignInfo["status"] {
 }
 
 async function listMetaCampaigns(accountId: string): Promise<AdsCampaignListResult> {
-  const token = process.env.META_ACCESS_TOKEN;
-  if (!token) return { ok: false, error: "META_ACCESS_TOKEN belum diset." };
-  const version = process.env.META_API_VERSION ?? "v24.0";
+  const token = await getMetaToken();
+  if (!token) return { ok: false, error: META_TOKEN_MISSING };
+  const version = META_API_VERSION;
   const base = `https://graph.facebook.com/${version}/act_${digits(accountId)}`;
 
   try {
     const accountRes = await fetch(`${base}?fields=currency&access_token=${encodeURIComponent(token)}`, { cache: "no-store" });
-    const account = (await accountRes.json()) as { currency?: string; error?: { message?: string } };
-    if (!accountRes.ok || account.error) return { ok: false, error: account.error?.message ?? `Meta API error ${accountRes.status}` };
+    const account = (await accountRes.json()) as { currency?: string; error?: MetaApiError };
+    if (!accountRes.ok || account.error) return { ok: false, error: metaErrorMessage(account.error, accountRes.status) };
     const divisor = META_ZERO_DECIMAL.has(account.currency ?? "") ? 1 : 100;
 
     const url = new URL(`${base}/campaigns`);
@@ -221,9 +223,9 @@ async function listMetaCampaigns(accountId: string): Promise<AdsCampaignListResu
           stop_time?: string;
         }[];
         paging?: { next?: string };
-        error?: { message?: string };
+        error?: MetaApiError;
       };
-      if (!res.ok || body.error) return { ok: false, error: body.error?.message ?? `Meta API error ${res.status}` };
+      if (!res.ok || body.error) return { ok: false, error: metaErrorMessage(body.error, res.status) };
       for (const c of body.data ?? []) {
         campaigns.push({
           id: c.id,
