@@ -8,6 +8,7 @@ import {
   MessageCircleIcon,
   RefreshCwIcon,
   SendIcon,
+  ShieldCheckIcon,
   SmartphoneIcon,
   TriangleAlertIcon,
 } from "lucide-react";
@@ -29,6 +30,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Panel } from "@/components/dashboard/panel";
 
 const MESSAGE_STATUS = { pending: "menunggu dikirim", sent: "terkirim", failed: "gagal" } as const;
+
+/** Renders WhatsApp's *bold* and _italic_ markup. */
+function WaText({ text }: { text: string }) {
+  return text.split(/(\*[^*\n]+\*|_[^_\n]+_)/g).map((part, i) =>
+    part.startsWith("*") && part.endsWith("*") && part.length > 2 ? (
+      <strong key={i}>{part.slice(1, -1)}</strong>
+    ) : part.startsWith("_") && part.endsWith("_") && part.length > 2 ? (
+      <em key={i}>{part.slice(1, -1)}</em>
+    ) : (
+      part
+    ),
+  );
+}
 
 /** Link the advertiser's own WhatsApp (Baileys, via QR) and choose the report group. */
 export function WhatsAppCard({ initial }: { initial: WhatsAppStatus }) {
@@ -171,6 +185,24 @@ export function WhatsAppCard({ initial }: { initial: WhatsAppStatus }) {
                 {status.lastMessage.error && ` · ${status.lastMessage.error}`}
               </span>
             )}
+          </div>
+
+          {status.preview && (
+            <div className="grid gap-1.5">
+              <Label>Contoh pesan di grup (laporan terakhir)</Label>
+              <div className="max-w-sm rounded-lg rounded-tl-none bg-[#d9fdd3] px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap text-[#111b21] shadow-sm dark:bg-[#005c4b] dark:text-[#e9edef]">
+                <WaText text={status.preview} />
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-2 rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
+            <ShieldCheckIcon className="mt-0.5 size-4 shrink-0 text-success" />
+            <p>
+              Pengaman anti-banned aktif: pesan dikirim seperti orang mengetik (status &ldquo;mengetik…&rdquo;), diberi jeda acak antar
+              pesan, dibatasi per jam &amp; per hari, dan edit laporan beruntun digabung jadi satu pesan. Gunakan hanya untuk grup
+              internal, jangan kirim ke kontak yang tidak menyimpan nomormu.
+            </p>
           </div>
         </div>
       )}

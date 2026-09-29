@@ -120,5 +120,23 @@ terkirim dari nomornya ke grup itu.
   pesan tertahan di antrean (dibuang setelah 12 jam).
 - Sesi login disimpan di Postgres (`wa_auth`), jadi tidak perlu scan ulang setelah restart.
 - Aplikasi dan worker hanya berkomunikasi lewat database (`wa_sessions`, `wa_outbox`, `wa_worker`).
+- Format pesan di grup, satu blok per hari (hari tanpa angka dilewati; kiriman ulang setelah laporan diubah diberi
+  tanda _(revisi)_):
+
+  ```
+  Advertiser *wahib*
+  Spent Iklan *2026-09-25*
+  => Facebook Kelas Online = Rp 653.851
+  => Google Kelas Online = Rp 988.978
+  ```
+- Pengaman anti-banned di worker:
+  - hanya satu worker per database (Postgres advisory lock) — dua worker akan saling menendang sesi;
+  - reconnect dengan backoff eksponensial (5 dtk → maks 5 menit), berhenti setelah 10× gagal, saat sesi dibuka
+    di tempat lain (440) atau ditolak WhatsApp (403);
+  - metadata grup di-cache, dan pesan terkirim disimpan sementara untuk permintaan kirim ulang anggota grup;
+  - tiap pesan: online → "mengetik…" (lama sesuai panjang pesan) → kirim → offline lagi;
+  - jeda acak antar pesan per nomor dan batas per jam/hari (`WA_MIN_GAP_SEC`, `WA_MAX_PER_HOUR`, `WA_MAX_PER_DAY`);
+  - pesan ditahan `WA_SEND_DELAY_SEC` (default 60 dtk): edit beruntun digabung jadi satu pesan, dan simpan ulang tanpa
+    perubahan angka tidak dikirim lagi.
 - Baileys adalah library WhatsApp Web **tidak resmi**. Pakai untuk kirim ke grup internal saja (bukan
   broadcast/spam) agar nomor tidak berisiko dibatasi WhatsApp.

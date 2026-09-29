@@ -319,6 +319,8 @@ export const waOutbox = pgTable(
     attempts: integer("attempts").notNull().default(0),
     error: text("error"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Not sent before this time, so quick successive edits of a report collapse into one message. */
+    sendAfter: timestamp("send_after", { withTimezone: true }).notNull().defaultNow(),
     sentAt: timestamp("sent_at", { withTimezone: true }),
   },
   (t) => [index("wa_outbox_status").on(t.status), index("wa_outbox_report").on(t.reportId)],
