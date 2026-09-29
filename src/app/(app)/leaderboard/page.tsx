@@ -23,7 +23,8 @@ export default async function LeaderboardPage({ searchParams }: { searchParams: 
   const role = MEMBER_ROLES.find((r) => r === sp.role) ?? null;
   const members = (await getMembers()).filter((m) => !role || m.role === role);
   const cards = (await getScorecards(period, members)).sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
-  const expected = workingDays(periodRange(period).start, periodAsOf(period));
+  const reportStart = periodRange(period).start;
+  const reportEnd = periodAsOf(period);
   const podium = cards.slice(0, 3);
   const tabs = [{ value: null, label: "All roles" }, ...MEMBER_ROLES.map((r) => ({ value: r, label: ROLE_LABEL[r] }))];
 
@@ -119,7 +120,7 @@ export default async function LeaderboardPage({ searchParams }: { searchParams: 
                       </TableCell>
                       <TableCell className="tabular-nums">
                         {c.reportsCount}
-                        <span className="text-muted-foreground">/{expected}</span>
+                        <span className="text-muted-foreground">/{workingDays(reportStart, reportEnd, c.member.role === "advertiser")}</span>
                       </TableCell>
                       <TableCell>
                         <KpiStatusLabel status={c.status} />

@@ -20,6 +20,7 @@ import type { Role } from "@/db/schema";
 import { cn } from "@/lib/utils";
 import { ROLE_LABEL } from "@/lib/roles";
 import { Logo } from "@/components/logo";
+import { useTheme } from "@/components/theme-provider";
 import { UserAvatar } from "@/components/user-avatar";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -284,20 +285,6 @@ function CountBadge({ n }: { n: number }) {
       {n > 99 ? "99+" : n}
     </span>
   );
-}
-
-export function useTheme() {
-  const [dark, setDark] = React.useState(false);
-  React.useEffect(() => setDark(document.documentElement.classList.contains("dark")), []);
-  const toggle = () => {
-    const next = !document.documentElement.classList.contains("dark");
-    document.documentElement.classList.toggle("dark", next);
-    try {
-      localStorage.setItem("theme", next ? "dark" : "light");
-    } catch {}
-    setDark(next);
-  };
-  return { dark, toggle };
 }
 
 function UserMenu({ user, collapsed }: { user: ShellUser; collapsed: boolean }) {

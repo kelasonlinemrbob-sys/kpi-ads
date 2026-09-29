@@ -46,6 +46,8 @@ export type TeamRow = {
   expectedReports: number;
   lastReportDate: string | null;
   reportedToday: boolean;
+  reportDueToday: boolean;
+  overdueToday: boolean;
 };
 
 type SortKey = "name" | "role" | "score" | "reports" | "last" | "status";
@@ -205,6 +207,10 @@ export function TeamTable({ rows, period, title = "Team Performance" }: { rows: 
                     <TableCell>
                       {r.reportedToday ? (
                         <span className="text-success">Today</span>
+                      ) : r.overdueToday ? (
+                        <span className="font-medium text-destructive">Overdue</span>
+                      ) : r.reportDueToday ? (
+                        <span className="text-warning">Due 15:30</span>
                       ) : r.lastReportDate ? (
                         formatDate(r.lastReportDate, { day: "2-digit", month: "short" })
                       ) : (

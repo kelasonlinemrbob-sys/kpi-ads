@@ -16,14 +16,18 @@ import { Textarea } from "@/components/ui/textarea";
 
 export type CampaignRow = Omit<Campaign, "createdAt" | "updatedAt"> & { ownerName: string };
 
+export type AdAccountOption = { id: number; platform: Campaign["platform"]; name: string; accountId: string };
+
 export function CampaignDialog({
   campaign,
   advertisers,
+  adAccounts,
   open: controlledOpen,
   onOpenChange,
 }: {
   campaign?: CampaignRow;
   advertisers: { id: number; name: string }[] | null;
+  adAccounts: AdAccountOption[];
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
@@ -31,6 +35,8 @@ export function CampaignDialog({
   const open = controlledOpen ?? innerOpen;
   const setOpen = onOpenChange ?? setInnerOpen;
   const [state, action, pending] = useActionState(saveCampaign, undefined);
+  const [platform, setPlatform] = React.useState<Campaign["platform"]>(campaign?.platform ?? "meta");
+  const platformAccounts = adAccounts.filter((account) => account.platform === platform);
 
   React.useEffect(() => {
     if (state?.ok) {
@@ -62,7 +68,7 @@ export function CampaignDialog({
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Platform">
-              <Select name="platform" defaultValue={campaign?.platform ?? "meta"}>
+              <Select name="platform" value={platform} onValueChange={(value: Campaign["platform"]) => setPlatform(value)}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -121,6 +127,46 @@ export function CampaignDialog({
               <Input id="c-end" name="endDate" type="date" defaultValue={campaign?.endDate ?? ""} />
             </Field>
           </div>
+          {(platform === "meta" || platform === "google") && (
+            <div className="grid gap-3 rounded-lg border bg-muted/30 p-3 sm:grid-cols-2">
+              <p className="text-xs text-muted-foreground sm:col-span-2">
+                Untuk generate laporan otomatis: semua campaign di akun iklan yang namanya mengandung kode product
+                (mis. <span className="font-medium text-foreground">[SERUM] Retargeting 30D</span>) dijumlahkan ke product ini.
+              </p>
+              <Field label="Akun iklan">
+                <Select
+                  key={platform}
+                  name="adAccountId"
+                  defaultValue={
+                    campaign?.adAccountId && platformAccounts.some((a) => a.id === campaign.adAccountId)
+                      ? String(campaign.adAccountId)
+                      : "none"
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Tidak terhubung</SelectItem>
+                    {platformAccounts.map((account) => (
+                      <SelectItem key={account.id} value={String(account.id)}>
+                        {account.name} · {account.accountId}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label="Kode product" htmlFor="c-keyword">
+                <Input
+                  id="c-keyword"
+                  name="matchKeyword"
+                  placeholder="SERUM"
+                  className="uppercase"
+                  defaultValue={campaign?.matchKeyword ?? ""}
+                />
+              </Field>
+            </div>
+          )}
           <Field label="Landing page URL" htmlFor="c-lp">
             <Input id="c-lp" name="landingPageUrl" type="url" placeholder="https://" defaultValue={campaign?.landingPageUrl ?? ""} />
           </Field>

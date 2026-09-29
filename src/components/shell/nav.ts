@@ -35,7 +35,10 @@ export function buildNav(role: Role, counts: NavCounts): NavSection[] {
       : [
           { title: "Submit Report", href: "/reports/new" },
           { title: "My Reports", href: "/reports" },
-          { title: "Needs Revision", href: "/reports?status=revision", badge: counts.revisions },
+          // Advertiser reports are recorded without review; their notes get their own page instead.
+          role === "advertiser"
+            ? { title: "Catatan Harian", href: "/reports/notes" }
+            : { title: "Needs Revision", href: "/reports?status=revision", badge: counts.revisions },
         ],
   });
 
@@ -76,6 +79,8 @@ export function buildNav(role: Role, counts: NavCounts): NavSection[] {
 const TITLES: [prefix: string, section: string, page: string][] = [
   ["/dashboard", "Overview", "Dashboard"],
   ["/reports/new", "Daily Reports", "Submit Report"],
+  ["/reports/notes", "Daily Reports", "Catatan Harian"],
+  ["/reports/day", "Daily Reports", "Laporan Harian"],
   ["/reports/", "Daily Reports", "Report Detail"],
   ["/reports", "Daily Reports", "Reports"],
   ["/campaigns", "Campaigns", "All Campaigns"],

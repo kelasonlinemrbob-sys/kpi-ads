@@ -33,6 +33,7 @@ import {
   workingDays,
   type Entry,
 } from "@/lib/kpi";
+import { advertiserReportDeadlinePassed, isAdvertiserReportDay } from "@/lib/reporting";
 import { resolvePeriod } from "@/lib/period";
 import { formatDate, formatNumber, formatValue } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -154,7 +155,8 @@ async function SupervisorDashboard({ user, period }: { user: SessionUser; period
   const leads = metricTrend(byKey.get("leads")!, metrics, entries, prevEntries, dates);
   const roas = metricTrend(byKey.get("roas")!, metrics, entries, prevEntries, dates);
   const reportedToday = new Set(todayReports.map((r) => r.userId));
-  const expected = workingDays(start, asOf);
+  const advertiserDueToday = isAdvertiserReportDay(todayISO());
+  const deadlinePassed = advertiserReportDeadlinePassed();
 
   const rows: TeamRow[] = scorecards.map((s) => ({
     id: s.member.id,
@@ -166,9 +168,11 @@ async function SupervisorDashboard({ user, period }: { user: SessionUser; period
     delta: pctDelta(s.score, s.prevScore),
     status: s.status,
     reportsCount: s.reportsCount,
-    expectedReports: expected,
+    expectedReports: workingDays(start, asOf, s.member.role === "advertiser"),
     lastReportDate: s.lastReportDate,
     reportedToday: reportedToday.has(s.member.id),
+    reportDueToday: s.member.role === "advertiser" && advertiserDueToday,
+    overdueToday: s.member.role === "advertiser" && advertiserDueToday && deadlinePassed && !reportedToday.has(s.member.id),
   }));
 
   const trend = TEAM_TREND_KEYS.map((k) => byKey.get(k))
@@ -245,15 +249,23 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
     trend: metricTrend(byKey.get(key)!, metrics, entries, prevEntries, dates),
   }));
   const isCurrent = period === todayISO().slice(0, 7);
+  const reportRequiredToday = role !== "advertiser" || isAdvertiserReportDay(todayISO());
+  const reportOverdue = role === "advertiser" && reportRequiredToday && advertiserReportDeadlinePassed();
 
   return (
     <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)]">
       <div className="grid min-w-0 gap-3">
-        {isCurrent && !todayReport && (
+        {isCurrent && reportRequiredToday && !todayReport && (
           <div className="flex flex-col gap-3 rounded-xl border border-dashed bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="font-medium">You haven&apos;t submitted today&apos;s report</p>
-              <p className="text-sm text-muted-foreground">Submit your daily numbers so your KPI score stays up to date.</p>
+              <p className="font-medium">Laporan hari ini belum dikirim</p>
+              <p className="text-sm text-muted-foreground">
+                {role === "advertiser"
+                  ? reportOverdue
+                    ? "Deadline 15.30 WIB sudah lewat. Kirim hasil kemarin penuh dan hari ini sampai 15.30 sekarang."
+                    : "Wajib dikirim Senin–Jumat pukul 15.30 WIB: hasil kemarin penuh dan hari ini sampai 15.30."
+                  : "Submit your daily numbers so your KPI score stays up to date."}
+              </p>
             </div>
             <Button asChild>
               <Link href="/reports/new">

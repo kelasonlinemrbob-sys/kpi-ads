@@ -8,6 +8,62 @@
       "when": 1790385573533,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790652328715,
+      "tag": "0001_noisy_wolfsbane",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790654248459,
+      "tag": "0002_campaign_external_ids",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790660009180,
+      "tag": "0003_drop_campaign_external_ids",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790660021388,
+      "tag": "0004_ad_accounts_keyword_matching",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790662127292,
+      "tag": "0005_report_item_campaigns",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790663587965,
+      "tag": "0006_ad_campaigns_sync",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790664578862,
+      "tag": "0007_report_items_unique_per_day",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790668091199,
+      "tag": "0008_whatsapp",
+      "breakpoints": true
     }
   ]
 }

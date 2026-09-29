@@ -8,8 +8,18 @@ const META = {
   revision: { label: "Needs Revision", icon: RotateCcwIcon, tone: "text-destructive" },
 } as const;
 
-export function ReportStatus({ status, className }: { status: DailyReport["status"]; className?: string }) {
-  const m = META[status];
+export function ReportStatus({
+  status,
+  className,
+  noReview = false,
+}: {
+  status: DailyReport["status"];
+  className?: string;
+  noReview?: boolean;
+}) {
+  const m = noReview
+    ? { label: "Tercatat", icon: CircleCheckIcon, tone: "text-success" }
+    : META[status];
   return (
     <span className={cn("inline-flex items-center gap-1.5 text-sm", className)}>
       <m.icon className={cn("size-4", m.tone)} />

@@ -192,7 +192,10 @@ function avgOf(list: Entry[]) {
   return list.length ? list.reduce((s, e) => s + e.value, 0) / list.length : null;
 }
 
-/** Report days expected between two dates: Monday–Saturday. */
-export function workingDays(start: string, end: string) {
-  return datesBetween(start, end).filter((d) => parseISODate(d).getDay() !== 0).length;
+/** Report days expected between two dates. Advertisers use Monday–Friday; legacy roles may include Saturday. */
+export function workingDays(start: string, end: string, mondayToFriday = false) {
+  return datesBetween(start, end).filter((date) => {
+    const day = parseISODate(date).getDay();
+    return day !== 0 && (!mondayToFriday || day !== 6);
+  }).length;
 }

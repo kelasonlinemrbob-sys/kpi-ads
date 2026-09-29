@@ -5,11 +5,12 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/db";
-import { dailyReports, kpiEntries, kpiMetrics } from "@/db/schema";
+import { dailyReports, kpiEntries, kpiMetrics, users } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
 import { todayISO } from "@/lib/kpi";
 import { addDays, formatDate } from "@/lib/utils";
+import { saveAdvertiserReport } from "./advertiser-report";
 import type { FormState } from "./auth";
 
 /** How far back a member may submit or edit a missed report. */
@@ -25,6 +26,7 @@ const reportSchema = z.object({
 export async function saveReport(_: FormState, formData: FormData): Promise<FormState> {
   const user = await requireUser();
   if (user.role === "supervisor") return { error: "Supervisors don't submit daily reports." };
+  if (user.role === "advertiser") return saveAdvertiserReport(user, formData);
 
   const parsed = reportSchema.safeParse({
     date: formData.get("date"),
@@ -64,7 +66,16 @@ export async function saveReport(_: FormState, formData: FormData): Promise<Form
     if (existing) {
       await tx
         .update(dailyReports)
-        .set({ summary, blockers, planTomorrow, status: "submitted", updatedAt: new Date() })
+        .set({
+          summary,
+          blockers,
+          planTomorrow,
+          status: "submitted",
+          reviewerId: null,
+          reviewNote: null,
+          reviewedAt: null,
+          updatedAt: new Date(),
+        })
         .where(eq(dailyReports.id, existing.id));
       id = existing.id;
     } else {
@@ -112,6 +123,17 @@ export async function reviewReport(_: FormState, formData: FormData): Promise<Fo
   const { reportId, decision, note } = parsed.data;
   if (decision === "revision" && !note) return { error: "Tell the member what needs to be revised." };
 
+  const [target] = await db
+    .select({ role: users.role })
+    .from(dailyReports)
+    .innerJoin(users, eq(users.id, dailyReports.userId))
+    .where(eq(dailyReports.id, reportId))
+    .limit(1);
+  if (!target) return { error: "Report not found." };
+  if (target.role === "advertiser") {
+    return { error: "Laporan advertiser langsung tercatat dan tidak memerlukan approval." };
+  }
+
   const [report] = await db
     .update(dailyReports)
     .set({ status: decision, reviewNote: note ?? null, reviewerId: user.id, reviewedAt: new Date() })
@@ -136,6 +158,14 @@ export async function approveReports(ids: number[]) {
   const user = await requireUser();
   if (user.role !== "supervisor" || ids.length === 0) return;
   for (const id of ids) {
+    const [target] = await db
+      .select({ role: users.role })
+      .from(dailyReports)
+      .innerJoin(users, eq(users.id, dailyReports.userId))
+      .where(eq(dailyReports.id, id))
+      .limit(1);
+    if (!target || target.role === "advertiser") continue;
+
     const [report] = await db
       .update(dailyReports)
       .set({ status: "approved", reviewerId: user.id, reviewedAt: new Date() })

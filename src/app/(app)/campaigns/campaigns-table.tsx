@@ -29,7 +29,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, Panel } from "@/components/dashboard/panel";
 import { UserAvatar } from "@/components/user-avatar";
-import { CampaignDialog, type CampaignRow } from "./campaign-dialog";
+import { CampaignDialog, type AdAccountOption, type CampaignRow } from "./campaign-dialog";
 
 const STATUS_ICON: Record<Campaign["status"], { icon: typeof CirclePlayIcon; tone: string }> = {
   active: { icon: CirclePlayIcon, tone: "text-success" },
@@ -42,10 +42,12 @@ export function CampaignsTable({
   rows,
   currentUser,
   advertisers,
+  adAccounts,
 }: {
   rows: CampaignRow[];
   currentUser: { id: number; role: Role };
   advertisers: { id: number; name: string }[] | null;
+  adAccounts: AdAccountOption[];
 }) {
   const router = useRouter();
   const [editing, setEditing] = React.useState<CampaignRow | null>(null);
@@ -62,9 +64,9 @@ export function CampaignsTable({
   };
 
   return (
-    <Panel title="All Campaigns" icon={MegaphoneIcon} iconPosition="left">
+    <Panel title="Product" icon={MegaphoneIcon} iconPosition="left">
       {rows.length === 0 ? (
-        <EmptyState icon={MegaphoneIcon} title="No campaigns" description="Campaigns you create will show up here." />
+        <EmptyState icon={MegaphoneIcon} title="Belum ada product" description="Product yang kamu buat akan tampil di sini." />
       ) : (
         <div className="p-1.5">
           <Table>
@@ -87,7 +89,17 @@ export function CampaignsTable({
                 return (
                   <TableRow key={c.id}>
                     <TableCell className="max-w-80">
-                      <span className="block truncate font-medium">{c.name}</span>
+                      <span className="flex items-center gap-2">
+                        <span className="truncate font-medium">{c.name}</span>
+                        {c.matchKeyword && c.adAccountId && (
+                          <span
+                            className="shrink-0 rounded border bg-muted px-1.5 font-mono text-[10px] text-muted-foreground"
+                            title="Kode product untuk generate dari Ads"
+                          >
+                            {c.matchKeyword}
+                          </span>
+                        )}
+                      </span>
                       <span className="block truncate text-xs text-muted-foreground">
                         {[c.objective, c.product].filter(Boolean).join(" · ") || "—"}
                       </span>
@@ -180,6 +192,7 @@ export function CampaignsTable({
           key={editing.id}
           campaign={editing}
           advertisers={advertisers}
+          adAccounts={adAccounts}
           open
           onOpenChange={(o) => {
             if (!o) {

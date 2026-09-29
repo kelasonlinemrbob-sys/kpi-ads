@@ -1,4 +1,7 @@
 allowBuilds:
+  # Baileys' preinstall only checks the Node version; protobufjs' postinstall is optional.
+  '@whiskeysockets/baileys': false
   esbuild: true
+  protobufjs: false
   sharp: true
   unrs-resolver: true

@@ -12,7 +12,9 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx --env-file=.env src/db/seed.ts",
-    "db:create-supervisor": "tsx --env-file=.env src/db/create-supervisor.ts"
+    "db:create-supervisor": "tsx --env-file=.env src/db/create-supervisor.ts",
+    "db:seed-ads-demo": "tsx --env-file=.env src/db/seed-ads-demo.ts",
+    "wa:worker": "tsx --env-file=.env src/wa/worker.mts"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.10",
@@ -24,6 +26,7 @@
     "@radix-ui/react-select": "^2.2.5",
     "@radix-ui/react-slot": "^1.2.3",
     "@radix-ui/react-tooltip": "^1.2.7",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
     "bcryptjs": "^3.0.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -32,6 +35,8 @@
     "lucide-react": "^1.48.0",
     "next": "16.3.6",
     "pg": "^8.16.3",
+    "pino": "^10.3.1",
+    "qrcode": "^1.5.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "server-only": "^0.0.1",
@@ -43,6 +48,7 @@
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/pg": "^8.15.4",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "drizzle-kit": "^0.31.11",

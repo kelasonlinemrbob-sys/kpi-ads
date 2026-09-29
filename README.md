@@ -78,3 +78,37 @@ src/
 - Hari kerja dihitung Senin–Sabtu (dipakai untuk "Reports x/y").
 - Bobot KPI dan target default berlaku untuk semua bulan (skor bulan lalu dihitung ulang memakai bobot terbaru);
   target per anggota disimpan per bulan.
+- Laporan advertiser memakai satu form: pilih periode **kemarin** atau **hari ini**, lalu kirim. Menyimpan satu periode tidak
+  menimpa periode lain. **Laporan Senin** punya 4 periode: Jumat, Sabtu, Minggu (sehari penuh) dan Senin (s/d 15.30).
+  KPI (Ad Spend, Leads) dihitung dari semua periode sehari penuh.
+- **Generate dari Ads**: laporan tetap per product, datanya ditarik per akun iklan.
+  1. Di halaman **Campaigns → Akun iklan**, daftarkan akun Meta (ID tanpa `act_`) atau Google Ads (customer ID).
+  2. Di tiap campaign/product, pilih akun iklannya dan isi **kode product**, mis. `SERUM`.
+  3. Nama campaign di Ads Manager / Google Ads harus mengandung kode itu, mis. `[SERUM] Retargeting 30D`.
+  Saat advertiser klik *Generate dari Ads*, semua campaign di akun dijumlahkan per product (kode terpanjang menang bila
+  lebih dari satu cocok). Campaign ber-spend tanpa kode ditampilkan sebagai *belum terpetakan*. Kredensial `META_*` /
+  `GOOGLE_ADS_*` diset di `.env` (lihat `.env.example`). Tanggal mengikuti zona waktu akun iklan; untuk "hari ini"
+  angkanya adalah data sampai saat tombol diklik.
+- Rincian per campaign dari hasil generate ikut disimpan saat laporan dikirim (`advertiser_report_item_campaigns`) dan
+  bisa dibuka di halaman detail laporan dengan klik baris product. Kalau angka product diubah manual, rinciannya
+  tidak disimpan karena sudah tidak cocok dengan totalnya.
+- **Campaigns** punya dua tab. *Campaign Ads* berisi campaign asli dari akun Meta/Google (tombol **Sinkron dari Ads**:
+  nama, status, budget harian, jadwal; campaign yang dihapus di platform ditandai Ended). Tiap campaign dicocokkan ke
+  product lewat kode product, dan spend/lead/CPR bulan ini diambil dari rincian laporan harian advertiser.
+  *Product* berisi daftar product yang dipilih di laporan.
+- Data contoh tanpa kredensial API: `pnpm db:seed-ads-demo` (hanya menambah data; hapus lagi dengan
+  `pnpm db:seed-ads-demo --remove`).
+
+## WhatsApp laporan iklan (Baileys)
+
+Setiap advertiser menautkan WhatsApp-nya sendiri di **Settings → WhatsApp laporan iklan** (scan QR lewat
+*Perangkat tertaut*), memilih grup tujuan, dan setiap laporan harian yang dikirim/diperbarui otomatis
+terkirim dari nomornya ke grup itu.
+
+- Koneksi dipegang oleh proses terpisah: jalankan `pnpm wa:worker` di samping `pnpm dev` / `pnpm start`
+  (di server produksi jalankan dengan pm2/systemd agar selalu hidup). Tanpa worker, QR tidak muncul dan
+  pesan tertahan di antrean (dibuang setelah 12 jam).
+- Sesi login disimpan di Postgres (`wa_auth`), jadi tidak perlu scan ulang setelah restart.
+- Aplikasi dan worker hanya berkomunikasi lewat database (`wa_sessions`, `wa_outbox`, `wa_worker`).
+- Baileys adalah library WhatsApp Web **tidak resmi**. Pakai untuk kirim ke grup internal saja (bukan
+  broadcast/spam) agar nomor tidak berisiko dibatasi WhatsApp.

@@ -4,7 +4,9 @@ import {
   doublePrecision,
   index,
   integer,
+  jsonb,
   pgEnum,
+  primaryKey,
   pgTable,
   serial,
   text,
@@ -18,6 +20,7 @@ export const metricUnitEnum = pgEnum("metric_unit", ["number", "currency", "perc
 /** sum = total over the period, avg = daily average, last = latest reported value, ratio = sum(numerator)/sum(denominator) */
 export const aggregationEnum = pgEnum("aggregation", ["sum", "avg", "last", "ratio"]);
 export const reportStatusEnum = pgEnum("report_status", ["submitted", "approved", "revision"]);
+export const reportWindowEnum = pgEnum("report_window", ["previous_day", "today_to_cutoff"]);
 export const taskStatusEnum = pgEnum("task_status", ["todo", "in_progress", "review", "done"]);
 export const priorityEnum = pgEnum("priority", ["low", "medium", "high", "urgent"]);
 export const platformEnum = pgEnum("platform", ["meta", "google", "tiktok", "shopee", "other"]);
@@ -115,6 +118,45 @@ export const kpiEntries = pgTable(
   ],
 );
 
+/** Meta / Google ad account whose campaigns are pulled and grouped per product by keyword. */
+export const adAccounts = pgTable(
+  "ad_accounts",
+  {
+    id: serial("id").primaryKey(),
+    platform: platformEnum("platform").notNull(),
+    /** Meta ad account ID without "act_", or Google Ads customer ID — digits only. */
+    accountId: varchar("account_id", { length: 32 }).notNull(),
+    name: varchar("name", { length: 120 }).notNull(),
+    createdById: integer("created_by_id").references(() => users.id, { onDelete: "set null" }),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    lastSyncError: text("last_sync_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("ad_accounts_platform_account").on(t.platform, t.accountId)],
+);
+
+/** Campaign as it exists on Meta / Google Ads, refreshed by "Sinkron dari Ads". */
+export const adCampaigns = pgTable(
+  "ad_campaigns",
+  {
+    id: serial("id").primaryKey(),
+    adAccountId: integer("ad_account_id")
+      .notNull()
+      .references(() => adAccounts.id, { onDelete: "cascade" }),
+    externalId: varchar("external_id", { length: 64 }).notNull(),
+    name: varchar("name", { length: 255 }).notNull(),
+    status: campaignStatusEnum("status").notNull(),
+    /** Raw platform status, e.g. ACTIVE / CAMPAIGN_PAUSED / ENABLED. */
+    platformStatus: varchar("platform_status", { length: 40 }).notNull(),
+    objective: varchar("objective", { length: 80 }),
+    dailyBudget: doublePrecision("daily_budget"),
+    startDate: date("start_date"),
+    endDate: date("end_date"),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("ad_campaigns_account_external").on(t.adAccountId, t.externalId)],
+);
+
 export const campaigns = pgTable("campaigns", {
   id: serial("id").primaryKey(),
   name: varchar("name", { length: 160 }).notNull(),
@@ -130,9 +172,60 @@ export const campaigns = pgTable("campaigns", {
   startDate: date("start_date"),
   endDate: date("end_date"),
   notes: text("notes"),
+  /** Ad account the product runs in; its campaigns are pulled when generating a report. */
+  adAccountId: integer("ad_account_id").references(() => adAccounts.id, { onDelete: "set null" }),
+  /** Product code that must appear in the platform campaign name, e.g. "SERUM" for "[SERUM] Retargeting". */
+  matchKeyword: varchar("match_keyword", { length: 60 }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Product-level ad performance captured in the advertiser's two daily reporting windows. */
+export const advertiserReportItems = pgTable(
+  "advertiser_report_items",
+  {
+    id: serial("id").primaryKey(),
+    reportId: integer("report_id")
+      .notNull()
+      .references(() => dailyReports.id, { onDelete: "cascade" }),
+    campaignId: integer("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "restrict" }),
+    window: reportWindowEnum("window").notNull(),
+    performanceDate: date("performance_date").notNull(),
+    platform: platformEnum("platform").notNull(),
+    /** Snapshot so historical reports keep their label when a campaign is renamed. */
+    product: varchar("product", { length: 120 }).notNull(),
+    spent: doublePrecision("spent").notNull(),
+    impressions: integer("impressions").notNull(),
+    clicks: integer("clicks").notNull(),
+    leads: integer("leads").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("advertiser_report_items_report_date_campaign").on(t.reportId, t.performanceDate, t.campaignId),
+    index("advertiser_report_items_report").on(t.reportId),
+    index("advertiser_report_items_performance_date").on(t.performanceDate),
+  ],
+);
+
+/** Platform campaigns that were summed into one report item by "Generate dari Ads". */
+export const advertiserReportItemCampaigns = pgTable(
+  "advertiser_report_item_campaigns",
+  {
+    id: serial("id").primaryKey(),
+    itemId: integer("item_id")
+      .notNull()
+      .references(() => advertiserReportItems.id, { onDelete: "cascade" }),
+    externalId: varchar("external_id", { length: 64 }).notNull(),
+    name: varchar("name", { length: 255 }).notNull(),
+    spent: doublePrecision("spent").notNull(),
+    impressions: integer("impressions").notNull(),
+    clicks: integer("clicks").notNull(),
+    leads: integer("leads").notNull(),
+  },
+  (t) => [index("advertiser_report_item_campaigns_item").on(t.itemId)],
+);
 
 export const tasks = pgTable(
   "tasks",
@@ -172,10 +265,80 @@ export const activities = pgTable(
   (t) => [index("activities_created").on(t.createdAt)],
 );
 
+export const waSessionStatusEnum = pgEnum("wa_session_status", ["disconnected", "connecting", "qr", "connected"]);
+export const waMessageStatusEnum = pgEnum("wa_message_status", ["pending", "sent", "failed"]);
+
+/**
+ * One WhatsApp (Baileys) login per advertiser. The app sets the desired state (`wantConnected`,
+ * group, auto-send); the worker (`pnpm wa:worker`) owns the connection and writes status / QR back.
+ */
+export const waSessions = pgTable("wa_sessions", {
+  userId: integer("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  wantConnected: boolean("want_connected").notNull().default(false),
+  status: waSessionStatusEnum("status").notNull().default("disconnected"),
+  /** Raw QR payload to render while `status` is "qr". */
+  qr: text("qr"),
+  phone: varchar("phone", { length: 40 }),
+  groupJid: varchar("group_jid", { length: 80 }),
+  groupName: varchar("group_name", { length: 160 }),
+  /** Groups the account is in, refreshed by the worker: [{ id, subject }]. */
+  groups: jsonb("groups").$type<{ id: string; subject: string }[]>(),
+  refreshGroups: boolean("refresh_groups").notNull().default(false),
+  autoSend: boolean("auto_send").notNull().default(true),
+  lastError: text("last_error"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Baileys auth state (creds + signal keys) per session, JSON-encoded with BufferJSON. */
+export const waAuth = pgTable(
+  "wa_auth",
+  {
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    key: varchar("key", { length: 200 }).notNull(),
+    value: text("value").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.key] })],
+);
+
+/** Messages waiting to be sent by the worker from the advertiser's own WhatsApp. */
+export const waOutbox = pgTable(
+  "wa_outbox",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    reportId: integer("report_id").references(() => dailyReports.id, { onDelete: "set null" }),
+    groupJid: varchar("group_jid", { length: 80 }).notNull(),
+    body: text("body").notNull(),
+    status: waMessageStatusEnum("status").notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+  },
+  (t) => [index("wa_outbox_status").on(t.status), index("wa_outbox_report").on(t.reportId)],
+);
+
+/** Single-row heartbeat so the app can tell whether the WhatsApp worker is running. */
+export const waWorker = pgTable("wa_worker", {
+  id: integer("id").primaryKey(),
+  heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull(),
+});
+
 export type User = typeof users.$inferSelect;
+export type WaSession = typeof waSessions.$inferSelect;
 export type Role = (typeof roleEnum.enumValues)[number];
 export type KpiMetric = typeof kpiMetrics.$inferSelect;
 export type DailyReport = typeof dailyReports.$inferSelect;
+export type AdvertiserReportItem = typeof advertiserReportItems.$inferSelect;
+export type AdvertiserReportItemCampaign = typeof advertiserReportItemCampaigns.$inferSelect;
 export type Campaign = typeof campaigns.$inferSelect;
+export type AdAccount = typeof adAccounts.$inferSelect;
+export type AdCampaign = typeof adCampaigns.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type Activity = typeof activities.$inferSelect;

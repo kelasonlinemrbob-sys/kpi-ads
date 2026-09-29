@@ -2,19 +2,20 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { alias } from "drizzle-orm/pg-core";
-import { eq } from "drizzle-orm";
-import { ArrowLeftIcon, CalculatorIcon, ClipboardListIcon, PencilIcon, ShieldCheckIcon } from "lucide-react";
+import { desc, eq } from "drizzle-orm";
+import { ArrowLeftIcon, CalculatorIcon, CircleCheckIcon, ClipboardListIcon, MessageCircleIcon, PencilIcon, ShieldCheckIcon } from "lucide-react";
 import { db } from "@/db";
-import { dailyReports, kpiEntries, users } from "@/db/schema";
+import { advertiserReportItems, dailyReports, kpiEntries, users, waOutbox, waSessions } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
-import { getMetrics } from "@/lib/data";
+import { getItemCampaigns, getMetrics } from "@/lib/data";
 import { aggregate, todayISO, type Entry } from "@/lib/kpi";
 import { ROLE_LABEL } from "@/lib/roles";
-import { addDays, formatDate, formatValue } from "@/lib/utils";
+import { addDays, cn, formatDate, formatValue } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { PageHeader, Panel } from "@/components/dashboard/panel";
 import { ReportStatus } from "@/components/report-status";
 import { UserAvatar } from "@/components/user-avatar";
+import { AdvertiserReportDetail } from "./advertiser-report-detail";
 import { ReviewForm } from "./review-form";
 
 export const metadata: Metadata = { title: "Report" };
@@ -36,11 +37,24 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
   if (!row || (user.role !== "supervisor" && row.report.userId !== user.id)) notFound();
   const { report, member } = row;
 
-  const [metrics, entries] = await Promise.all([getMetrics(), db.select().from(kpiEntries).where(eq(kpiEntries.reportId, id))]);
+  const [metrics, entries, advertiserItems, [waMessage]] = await Promise.all([
+    getMetrics(),
+    db.select().from(kpiEntries).where(eq(kpiEntries.reportId, id)),
+    db.select().from(advertiserReportItems).where(eq(advertiserReportItems.reportId, id)),
+    db
+      .select({ status: waOutbox.status, error: waOutbox.error, groupName: waSessions.groupName })
+      .from(waOutbox)
+      .leftJoin(waSessions, eq(waSessions.userId, waOutbox.userId))
+      .where(eq(waOutbox.reportId, id))
+      .orderBy(desc(waOutbox.createdAt))
+      .limit(1),
+  ]);
+  const itemCampaigns = await getItemCampaigns(advertiserItems.map((item) => item.id));
   const roleMetrics = metrics.filter((m) => m.role === member.role);
   const byKey = new Map(metrics.map((m) => [m.key, m]));
   const asEntries: Entry[] = entries.map((e) => ({ userId: e.userId, metricId: e.metricId, date: e.date, value: e.value }));
-  const canEdit = user.id === report.userId && report.status !== "approved" && report.date >= addDays(todayISO(), -7);
+  const requiresReview = member.role !== "advertiser";
+  const canEdit = user.id === report.userId && (!requiresReview || report.status !== "approved") && report.date >= addDays(todayISO(), -7);
 
   return (
     <>
@@ -51,7 +65,7 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
         title={formatDate(report.date, { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
         description={
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <ReportStatus status={report.status} />
+            <ReportStatus status={report.status} noReview={!requiresReview} />
             <span>· Submitted {report.createdAt.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
           </span>
         }
@@ -66,25 +80,54 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
         }
       />
 
+      {waMessage && (
+        <p className="mb-3 flex items-center gap-2 text-sm text-muted-foreground">
+          <MessageCircleIcon
+            className={cn(
+              "size-4",
+              waMessage.status === "sent" ? "text-success" : waMessage.status === "failed" ? "text-destructive" : "text-warning",
+            )}
+          />
+          WhatsApp{waMessage.groupName ? ` ke ${waMessage.groupName}` : ""}:{" "}
+          {waMessage.status === "sent" ? "terkirim" : waMessage.status === "failed" ? `gagal — ${waMessage.error}` : "menunggu dikirim"}
+        </p>
+      )}
+
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="grid min-w-0 content-start gap-3">
-          <Panel title="Reported Numbers" icon={CalculatorIcon} iconPosition="left">
-            <dl className="grid grid-cols-2 divide-x divide-y sm:grid-cols-3 [&>div]:border-border">
-              {roleMetrics.map((m) => {
-                const v = aggregate(m, asEntries, byKey);
-                return (
-                  <div key={m.id} className="p-4">
-                    <dt className="text-sm text-muted-foreground">{m.name}</dt>
-                    <dd className="mt-1.5 text-2xl font-medium tabular-nums">{v === null ? "–" : formatValue(v, m.unit)}</dd>
-                  </div>
-                );
-              })}
-            </dl>
-          </Panel>
-          <Panel title="Activity Summary" icon={ClipboardListIcon} iconPosition="left" bodyClassName="grid gap-4 p-4 text-sm">
-            <Section label="What was done">{report.summary}</Section>
-            <Section label="Blockers">{report.blockers}</Section>
-            <Section label="Plan for tomorrow">{report.planTomorrow}</Section>
+          {member.role === "advertiser" && advertiserItems.length > 0 ? (
+            <AdvertiserReportDetail
+              reportDate={report.date}
+              items={advertiserItems.map((item) => ({ ...item, campaigns: itemCampaigns.get(item.id) ?? [] }))}
+            />
+          ) : (
+            <Panel title="Reported Numbers" icon={CalculatorIcon} iconPosition="left">
+              <dl className="grid grid-cols-2 divide-x divide-y sm:grid-cols-3 [&>div]:border-border">
+                {roleMetrics.map((m) => {
+                  const v = aggregate(m, asEntries, byKey);
+                  return (
+                    <div key={m.id} className="p-4">
+                      <dt className="text-sm text-muted-foreground">{m.name}</dt>
+                      <dd className="mt-1.5 text-2xl font-medium tabular-nums">{v === null ? "–" : formatValue(v, m.unit)}</dd>
+                    </div>
+                  );
+                })}
+              </dl>
+            </Panel>
+          )}
+          <Panel
+            title={advertiserItems.length > 0 ? "Catatan" : "Activity Summary"}
+            icon={ClipboardListIcon}
+            iconPosition="left"
+            bodyClassName="grid gap-4 p-4 text-sm"
+          >
+            <Section label={advertiserItems.length > 0 ? "Catatan laporan" : "What was done"}>{report.summary}</Section>
+            {advertiserItems.length === 0 && (
+              <>
+                <Section label="Blockers">{report.blockers}</Section>
+                <Section label="Plan for tomorrow">{report.planTomorrow}</Section>
+              </>
+            )}
           </Panel>
         </div>
 
@@ -108,23 +151,34 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
               </div>
             )}
           </Panel>
-          <Panel title="Review" icon={ShieldCheckIcon} bodyClassName="p-4">
-            {report.reviewedAt && (
-              <div className="mb-3 text-sm">
-                <ReportStatus status={report.status} />
-                <p className="mt-1 text-muted-foreground">
-                  by {row.reviewerName ?? "—"} ·{" "}
-                  {report.reviewedAt.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+          {requiresReview ? (
+            <Panel title="Review" icon={ShieldCheckIcon} bodyClassName="p-4">
+              {report.reviewedAt && (
+                <div className="mb-3 text-sm">
+                  <ReportStatus status={report.status} />
+                  <p className="mt-1 text-muted-foreground">
+                    by {row.reviewerName ?? "—"} ·{" "}
+                    {report.reviewedAt.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  </p>
+                  {report.reviewNote && <p className="mt-3 rounded-lg bg-muted/60 p-3">“{report.reviewNote}”</p>}
+                </div>
+              )}
+              {user.role === "supervisor" ? (
+                <ReviewForm reportId={report.id} status={report.status} />
+              ) : (
+                !report.reviewedAt && <p className="text-sm text-muted-foreground">Waiting for your supervisor to review this report.</p>
+              )}
+            </Panel>
+          ) : (
+            <Panel title="Status laporan" icon={CircleCheckIcon} bodyClassName="p-4">
+              <div className="flex gap-3 text-sm">
+                <CircleCheckIcon className="mt-0.5 size-4 shrink-0 text-success" />
+                <p className="text-muted-foreground">
+                  Laporan advertiser langsung tercatat setelah dikirim dan tidak memerlukan approval admin.
                 </p>
-                {report.reviewNote && <p className="mt-3 rounded-lg bg-muted/60 p-3">“{report.reviewNote}”</p>}
               </div>
-            )}
-            {user.role === "supervisor" ? (
-              <ReviewForm reportId={report.id} status={report.status} />
-            ) : (
-              !report.reviewedAt && <p className="text-sm text-muted-foreground">Waiting for your supervisor to review this report.</p>
-            )}
-          </Panel>
+            </Panel>
+          )}
         </div>
       </div>
     </>

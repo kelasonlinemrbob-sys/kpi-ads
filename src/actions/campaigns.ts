@@ -4,7 +4,8 @@ import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
-import { campaigns, campaignStatusEnum, platformEnum } from "@/db/schema";
+import { adAccounts, campaigns, campaignStatusEnum, platformEnum } from "@/db/schema";
+import { normalizeKeyword } from "@/lib/ads-matching";
 import { requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
 import { can } from "@/lib/roles";
@@ -29,6 +30,16 @@ const campaignSchema = z.object({
   startDate: optionalDate,
   endDate: optionalDate,
   notes: z.string().trim().max(2000).optional(),
+  adAccountId: z
+    .string()
+    .optional()
+    .transform((v) => (v && v !== "none" ? Number(v) : null)),
+  matchKeyword: z
+    .string()
+    .trim()
+    .max(60)
+    .optional()
+    .transform((v) => (v ? normalizeKeyword(v) : null)),
 });
 
 async function loadEditable(id: number) {
@@ -47,6 +58,12 @@ export async function saveCampaign(_: FormState, formData: FormData): Promise<Fo
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };
   const { id, ownerId, ...data } = parsed.data;
   if (data.startDate && data.endDate && data.endDate < data.startDate) return { error: "End date must be after start date." };
+  if (data.adAccountId) {
+    const [account] = await db.select().from(adAccounts).where(eq(adAccounts.id, data.adAccountId)).limit(1);
+    if (!account) return { error: "Akun iklan tidak ditemukan." };
+    if (account.platform !== data.platform) return { error: "Platform akun iklan tidak sama dengan platform campaign." };
+    if (!data.matchKeyword) return { error: "Isi kode product agar campaign di akun iklan bisa dikenali." };
+  }
   // advertisers always own what they create; supervisors can assign an owner
   const owner = user.role === "supervisor" && ownerId ? ownerId : user.id;
 
@@ -104,4 +121,49 @@ export async function deleteCampaign(id: number) {
   await db.delete(campaigns).where(eq(campaigns.id, id));
   revalidatePath("/campaigns");
   return { ok: true };
+}
+
+const quickProductSchema = z.object({
+  product: z.string().trim().min(2, "Nama product minimal 2 karakter.").max(120),
+  platform: z.enum(platformEnum.enumValues),
+});
+
+/** Creates an active product for the current advertiser straight from the report form. */
+export async function createProductFromReport(input: { product: string; platform: string }) {
+  const user = await requireUser();
+  if (user.role !== "advertiser") return { error: "Hanya advertiser yang dapat menambah product dari laporan." };
+  const parsed = quickProductSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message };
+  const { product, platform } = parsed.data;
+
+  const owned = await db.select().from(campaigns).where(eq(campaigns.ownerId, user.id));
+  const duplicate = owned.find(
+    (c) => c.platform === platform && (c.product?.trim() || c.name).toLowerCase() === product.toLowerCase(),
+  );
+  if (duplicate) return { error: "Product dengan nama dan platform ini sudah ada." };
+
+  const [created] = await db
+    .insert(campaigns)
+    .values({ name: product, product, platform, status: "active", ownerId: user.id })
+    .returning();
+  await logActivity({
+    actorId: user.id,
+    subjectUserId: user.id,
+    type: "campaign_created",
+    title: "New Campaign",
+    description: `${product} (${platform})`,
+    href: "/campaigns",
+  });
+  revalidatePath("/campaigns");
+  return {
+    ok: true as const,
+    campaign: {
+      id: created!.id,
+      name: created!.name,
+      product: created!.product ?? created!.name,
+      platform: created!.platform,
+      status: created!.status,
+      linked: false,
+    },
+  };
 }

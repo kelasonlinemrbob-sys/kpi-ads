@@ -32,7 +32,7 @@ export function ReportsTable({ rows, canApprove, showMember }: { rows: ReportRow
   const router = useRouter();
   const [selected, setSelected] = React.useState<Set<number>>(new Set());
   const [pending, startTransition] = React.useTransition();
-  const selectable = rows.filter((r) => r.status === "submitted");
+  const selectable = rows.filter((r) => r.status === "submitted" && r.role !== "advertiser");
   const allSelected = selectable.length > 0 && selectable.every((r) => selected.has(r.id));
 
   React.useEffect(() => setSelected(new Set()), [rows]);
@@ -102,7 +102,7 @@ export function ReportsTable({ rows, canApprove, showMember }: { rows: ReportRow
                       <Checkbox
                         aria-label={`Select report ${r.id}`}
                         checked={selected.has(r.id)}
-                        disabled={r.status !== "submitted"}
+                        disabled={r.status !== "submitted" || r.role === "advertiser"}
                         onCheckedChange={() => toggle(r.id)}
                       />
                     </TableCell>
@@ -133,7 +133,7 @@ export function ReportsTable({ rows, canApprove, showMember }: { rows: ReportRow
                   </TableCell>
                   <TableCell className="hidden max-w-80 truncate text-muted-foreground 2xl:table-cell">{r.summary}</TableCell>
                   <TableCell>
-                    <ReportStatus status={r.status} />
+                    <ReportStatus status={r.status} noReview={r.role === "advertiser"} />
                   </TableCell>
                   <TableCell>
                     <Button asChild variant="ghost" size="icon-sm" aria-label="Open report">

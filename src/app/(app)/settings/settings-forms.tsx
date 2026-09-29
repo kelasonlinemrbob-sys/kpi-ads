@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Panel } from "@/components/dashboard/panel";
-import { useTheme } from "@/components/shell/app-shell";
+import { useTheme } from "@/components/theme-provider";
 
 function useToast(state: FormState, onOk?: () => void) {
   React.useEffect(() => {

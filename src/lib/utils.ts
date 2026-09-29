@@ -84,6 +84,11 @@ export function formatDate(s: string | Date, opts?: Intl.DateTimeFormatOptions) 
   return d.toLocaleDateString("en-GB", opts ?? { day: "2-digit", month: "short", year: "numeric" });
 }
 
+/** Indonesian long date, e.g. "Sabtu, 26 September 2026". */
+export function formatLongDateId(s: string) {
+  return parseISODate(s).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+}
+
 export function formatTime(d: Date) {
   return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
 }

@@ -2,7 +2,19 @@ import "server-only";
 import { cache } from "react";
 import { and, asc, desc, eq, gte, inArray, lte, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { activities, dailyReports, kpiEntries, kpiMetrics, kpiTargets, tasks, users, type Role } from "@/db/schema";
+import {
+  activities,
+  advertiserReportItemCampaigns,
+  advertiserReportItems,
+  dailyReports,
+  kpiEntries,
+  kpiMetrics,
+  kpiTargets,
+  tasks,
+  users,
+  type AdvertiserReportItemCampaign,
+  type Role,
+} from "@/db/schema";
 import type { SessionUser } from "@/lib/auth";
 import {
   comparableRange,
@@ -206,7 +218,8 @@ export async function getNotifications(user: SessionUser) {
     const [row] = await db
       .select({ n: sql<number>`count(*)`.mapWith(Number) })
       .from(dailyReports)
-      .where(eq(dailyReports.status, "submitted"));
+      .innerJoin(users, eq(users.id, dailyReports.userId))
+      .where(and(eq(dailyReports.status, "submitted"), ne(users.role, "advertiser")));
     return { pendingReviews: row?.n ?? 0, openTasks: 0, revisions: 0 };
   }
   const [t] = await db
@@ -217,9 +230,62 @@ export async function getNotifications(user: SessionUser) {
     .select({ n: sql<number>`count(*)`.mapWith(Number) })
     .from(dailyReports)
     .where(and(eq(dailyReports.userId, user.id), eq(dailyReports.status, "revision")));
-  return { pendingReviews: 0, openTasks: t?.n ?? 0, revisions: r?.n ?? 0 };
+  // Advertiser reports are recorded without review, so there is nothing to revise.
+  return { pendingReviews: 0, openTasks: t?.n ?? 0, revisions: user.role === "advertiser" ? 0 : (r?.n ?? 0) };
 }
 
 export function roleMetrics<T extends { role: Role }>(metrics: T[], role: Role) {
   return metrics.filter((m) => m.role === role);
+}
+
+/** Platform campaigns behind generated advertiser report items, grouped by item id (largest spend first). */
+export async function getItemCampaigns(itemIds: number[]) {
+  const byItem = new Map<number, AdvertiserReportItemCampaign[]>();
+  if (!itemIds.length) return byItem;
+  const rows = await db
+    .select()
+    .from(advertiserReportItemCampaigns)
+    .where(inArray(advertiserReportItemCampaigns.itemId, itemIds))
+    .orderBy(desc(advertiserReportItemCampaigns.spent));
+  for (const row of rows) byItem.set(row.itemId, [...(byItem.get(row.itemId) ?? []), row]);
+  return byItem;
+}
+
+/** Full-day numbers of an advertiser report; impressions/clicks are null for reports saved before product rows existed. */
+export type ReportDayMetrics = { spent: number; impressions: number | null; clicks: number | null; leads: number };
+
+/**
+ * Full-day ("previous_day" periods, i.e. Friday–Sunday on a Monday) totals per advertiser report.
+ * Falls back to the report's Ad Spend / Leads KPI entries when it has no product rows.
+ */
+export async function getReportDayMetrics(reportIds: number[]) {
+  const byReport = new Map<number, ReportDayMetrics>();
+  if (!reportIds.length) return byReport;
+  const [items, entries] = await Promise.all([
+    db
+      .select({
+        reportId: advertiserReportItems.reportId,
+        spent: sql<number>`sum(${advertiserReportItems.spent})`.mapWith(Number),
+        impressions: sql<number>`sum(${advertiserReportItems.impressions})`.mapWith(Number),
+        clicks: sql<number>`sum(${advertiserReportItems.clicks})`.mapWith(Number),
+        leads: sql<number>`sum(${advertiserReportItems.leads})`.mapWith(Number),
+      })
+      .from(advertiserReportItems)
+      .where(and(inArray(advertiserReportItems.reportId, reportIds), eq(advertiserReportItems.window, "previous_day")))
+      .groupBy(advertiserReportItems.reportId),
+    db
+      .select({ reportId: kpiEntries.reportId, key: kpiMetrics.key, value: kpiEntries.value })
+      .from(kpiEntries)
+      .innerJoin(kpiMetrics, eq(kpiMetrics.id, kpiEntries.metricId))
+      .where(and(inArray(kpiEntries.reportId, reportIds), inArray(kpiMetrics.key, ["ad_spend", "leads"]))),
+  ]);
+  for (const row of items) byReport.set(row.reportId, row);
+  for (const id of reportIds) {
+    if (byReport.has(id)) continue;
+    const kpi = (key: string) => entries.find((e) => e.reportId === id && e.key === key)?.value ?? null;
+    if (kpi("ad_spend") !== null || kpi("leads") !== null) {
+      byReport.set(id, { spent: kpi("ad_spend") ?? 0, impressions: null, clicks: null, leads: kpi("leads") ?? 0 });
+    }
+  }
+  return byReport;
 }

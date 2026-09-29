@@ -81,7 +81,7 @@ export default async function ScorecardPage({ searchParams }: { searchParams: Pr
   const rank = ranked.findIndex((c) => c.member.id === target.id) + 1;
   const byKey = new Map(metrics.map((m) => [m.key, m]));
   const roleMetrics = metrics.filter((m) => m.role === target.role);
-  const expected = workingDays(start, asOf);
+  const expected = workingDays(start, asOf, target.role === "advertiser");
   const delta = pctDelta(card.score, card.prevScore);
   const tone = STATUS_META[card.status].tone;
 

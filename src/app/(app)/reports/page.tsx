@@ -1,18 +1,20 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { and, count, desc, eq, gte, inArray, lte, type SQL } from "drizzle-orm";
-import { ClipboardPenIcon, UserIcon } from "lucide-react";
+import { and, count, desc, eq, gte, inArray, lte, ne, type SQL } from "drizzle-orm";
+import { CalendarIcon, ClipboardPenIcon, MessageCircleIcon, UserIcon } from "lucide-react";
 import { db } from "@/db";
-import { dailyReports, kpiEntries, users } from "@/db/schema";
+import { dailyReports, kpiEntries, users, waSessions } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { getMembers, getMetrics } from "@/lib/data";
-import { periodRange } from "@/lib/kpi";
+import { periodRange, todayISO } from "@/lib/kpi";
+import { resolveReportRange } from "@/lib/reporting";
 import { resolvePeriod } from "@/lib/period";
 import { cn, formatValue } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/dashboard/panel";
 import { PeriodSelect } from "@/components/dashboard/period-select";
 import { UrlSelect } from "@/components/dashboard/url-select";
+import { AdvertiserReports } from "./advertiser-reports";
 import { ReportsTable, type ReportRow } from "./reports-table";
 
 export const metadata: Metadata = { title: "Daily Reports" };
@@ -35,16 +37,82 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const memberFilter = isSupervisor ? (sp.user ? Number(sp.user) : null) : user.id;
   const page = Math.max(1, Number(sp.page) || 1);
 
+  if (user.role === "advertiser") {
+    const filter = sp.filter === "todo" ? "todo" : "all";
+    const { range, options: rangeOptions } = resolveReportRange(sp.range, todayISO());
+    const [wa] = await db.select().from(waSessions).where(eq(waSessions.userId, user.id));
+    const waReady = wa?.status === "connected" && !!wa.groupJid && wa.autoSend;
+    const href = (next: "all" | "todo") => {
+      const params = new URLSearchParams(sp.range ? { range: sp.range } : {});
+      if (next === "todo") params.set("filter", "todo");
+      const qs = params.toString();
+      return qs ? `/reports?${qs}` : "/reports";
+    };
+    return (
+      <>
+        <PageHeader
+          title="My Reports"
+          description="Laporan iklan harianmu per hari kerja. Lengkapi periode yang belum diisi sebelum lewat 7 hari."
+          actions={
+            <>
+              <Button asChild variant="outline" className="h-8">
+                <Link href="/settings#whatsapp" title={waReady ? `Laporan otomatis dikirim ke ${wa?.groupName}` : "Hubungkan WhatsApp"}>
+                  <MessageCircleIcon className={waReady ? "text-success" : "text-muted-foreground"} />
+                  {waReady ? "WA aktif" : "Hubungkan WA"}
+                </Link>
+              </Button>
+              <UrlSelect
+                param="range"
+                label="Rentang tanggal"
+                value={range.value}
+                options={rangeOptions.map(({ value, label }) => ({ value, label }))}
+                icon={<CalendarIcon className="size-4 text-foreground/70" />}
+              />
+              <Button asChild className="h-8">
+                <Link href="/reports/new">
+                  <ClipboardPenIcon /> Submit report
+                </Link>
+              </Button>
+            </>
+          }
+        />
+        <AdvertiserReports
+          userId={user.id}
+          start={range.start}
+          end={range.end}
+          rangeLabel={range.label}
+          filter={filter}
+          filterHref={href}
+        />
+      </>
+    );
+  }
+
   const where: SQL[] = [gte(dailyReports.date, start), lte(dailyReports.date, end)];
   if (memberFilter) where.push(eq(dailyReports.userId, memberFilter));
   const base = and(...where);
-  const filtered = status === "all" ? base : and(base, eq(dailyReports.status, status));
+  const statusCondition =
+    status === "all"
+      ? undefined
+      : status === "submitted" && isSupervisor
+        ? and(eq(dailyReports.status, status), ne(users.role, "advertiser"))
+        : eq(dailyReports.status, status);
+  const filtered = statusCondition ? and(base, statusCondition) : base;
 
   const [metrics, members, statusCounts, [{ total }], reports] = await Promise.all([
     getMetrics(),
     isSupervisor ? getMembers(true) : Promise.resolve([]),
-    db.select({ status: dailyReports.status, n: count() }).from(dailyReports).where(base).groupBy(dailyReports.status),
-    db.select({ total: count() }).from(dailyReports).where(filtered),
+    db
+      .select({ status: dailyReports.status, role: users.role, n: count() })
+      .from(dailyReports)
+      .innerJoin(users, eq(users.id, dailyReports.userId))
+      .where(base)
+      .groupBy(dailyReports.status, users.role),
+    db
+      .select({ total: count() })
+      .from(dailyReports)
+      .innerJoin(users, eq(users.id, dailyReports.userId))
+      .where(filtered),
     db
       .select({
         id: dailyReports.id,
@@ -83,8 +151,13 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
       .map((x) => ({ label: x.metric.name, value: formatValue(x.value, x.metric.unit, true) })),
   }));
 
-  const countOf = (s: string) =>
-    s === "all" ? statusCounts.reduce((a, c) => a + c.n, 0) : (statusCounts.find((c) => c.status === s)?.n ?? 0);
+  const countOf = (s: string) => {
+    const matching = statusCounts.filter(
+      (count) => count.status === s && !(isSupervisor && s === "submitted" && count.role === "advertiser"),
+    );
+    return s === "all" ? statusCounts.reduce((total, count) => total + count.n, 0) : matching.reduce((total, count) => total + count.n, 0);
+  };
+  const visibleStatuses = STATUSES;
   const qs = (patch: Record<string, string | null>) => {
     const next = new URLSearchParams(Object.entries(sp).filter(([, v]) => v !== undefined) as [string, string][]);
     for (const [k, v] of Object.entries(patch)) (v === null ? next.delete(k) : next.set(k, v));
@@ -101,7 +174,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         title={isSupervisor ? "Daily Reports" : "My Reports"}
         description={
           isSupervisor
-            ? "Review what your team did every day and approve the reported numbers."
+            ? "Pantau laporan harian tim. Laporan advertiser langsung tercatat tanpa approval."
             : "Your daily KPI submissions. Reports can be edited until they are approved."
         }
         actions={
@@ -128,7 +201,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
       />
 
       <div className="mb-3 flex gap-1 overflow-x-auto rounded-xl border bg-muted/50 p-1 sm:w-fit">
-        {STATUSES.map((s) => (
+        {visibleStatuses.map((s) => (
           <Link
             key={s.value}
             href={qs({ status: s.value === "all" ? null : s.value })}

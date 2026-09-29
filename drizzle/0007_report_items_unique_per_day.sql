@@ -1,0 +1,2 @@
+DROP INDEX "advertiser_report_items_report_window_campaign";--> statement-breakpoint
+CREATE UNIQUE INDEX "advertiser_report_items_report_date_campaign" ON "advertiser_report_items" USING btree ("report_id","performance_date","campaign_id");
