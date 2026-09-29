@@ -40,6 +40,15 @@ Aturan di `src/lib/task-rules.ts`, dipakai server (validasi) dan UI (pilihan yan
 - Scope board: *Menunggu review saya*, *Tim advertiser junior* (Senior), filter role (Supervisor) dan filter kategori.
   Badge menu Tasks = tugas terbuka + tugas yang menunggu persetujuanmu.
 
+## Pengaturan
+
+Halaman **Pengaturan** dibagi per tab: *Profil* (nama, jabatan, role & info akun), *Keamanan* (ganti password dengan
+indikator kekuatan; setelah diganti semua perangkat lain otomatis keluar, plus tombol *Keluarkan perangkat lain*),
+*Tampilan* (Terang / Gelap / Ikuti sistem), *Integrasi* (WhatsApp laporan untuk advertiser, koneksi Meta Ads) dan
+*Aturan Laporan* (supervisor): jam batas laporan advertiser (default 15.30 WIB) dan batas isi/edit mundur (default 7 hari),
+yang langsung dipakai di form laporan, dashboard, validasi dan teks aplikasi. Reset password oleh supervisor di Team juga
+mengeluarkan sesi anggota tersebut.
+
 ## Role rangkap (1 orang 2 role)
 
 Di **Team → Members → Edit**, pilih **Role kedua** (mis. Advertiser + SEO Specialist) dan atur **porsi skor**

@@ -9,6 +9,7 @@ import { cpr, formatId } from "@/lib/ad-metrics";
 import { requireUser } from "@/lib/auth";
 import { getReportDayMetrics } from "@/lib/data";
 import { todayISO } from "@/lib/kpi";
+import { getReportRules } from "@/lib/report-rules";
 import { resolveReportRange } from "@/lib/reporting";
 import { addDays, formatLongDateId } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -18,7 +19,6 @@ import { UrlSelect } from "@/components/dashboard/url-select";
 
 export const metadata: Metadata = { title: "Catatan Harian" };
 
-const BACKFILL_DAYS = 7;
 
 /** The notes advertisers write with each daily ads report, next to that day's spend and results. */
 export default async function DailyNotesPage({ searchParams }: { searchParams: Promise<{ range?: string; q?: string }> }) {
@@ -28,7 +28,7 @@ export default async function DailyNotesPage({ searchParams }: { searchParams: P
   const today = todayISO();
   const { range, options } = resolveReportRange(sp.range, today);
   const q = sp.q?.trim() ?? "";
-  const editableFrom = addDays(today, -BACKFILL_DAYS);
+  const editableFrom = addDays(today, -(await getReportRules()).backfillDays);
 
   const reports = await db
     .select({ id: dailyReports.id, date: dailyReports.date, summary: dailyReports.summary, updatedAt: dailyReports.updatedAt })

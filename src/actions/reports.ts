@@ -10,12 +10,11 @@ import { requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
 import { memberRoles, needsReview } from "@/lib/member-roles";
 import { todayISO } from "@/lib/kpi";
+import { getReportRules } from "@/lib/report-rules";
 import { addDays, formatDate } from "@/lib/utils";
 import { saveAdvertiserReport } from "./advertiser-report";
 import type { FormState } from "./auth";
 
-/** How far back a member may submit or edit a missed report. */
-const BACKFILL_DAYS = 7;
 
 const reportSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date"),
@@ -43,8 +42,9 @@ export async function saveReport(_: FormState, formData: FormData): Promise<Form
   const { date, summary, blockers, planTomorrow } = parsed.data;
 
   const today = todayISO();
+  const { backfillDays } = await getReportRules();
   if (date > today) return { error: "You can't report for a future date." };
-  if (date < addDays(today, -BACKFILL_DAYS)) return { error: `Reports can only be backfilled up to ${BACKFILL_DAYS} days.` };
+  if (date < addDays(today, -backfillDays)) return { error: `Laporan hanya bisa diisi mundur maksimal ${backfillDays} hari.` };
 
   const roleMetrics = await db.select().from(kpiMetrics).where(eq(kpiMetrics.role, role));
   const metrics = roleMetrics.filter((m) => m.aggregation !== "ratio");

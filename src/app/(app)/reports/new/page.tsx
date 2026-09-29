@@ -6,7 +6,8 @@ import { advertiserReportItems, campaigns, dailyReports, kpiEntries } from "@/db
 import { requireUser } from "@/lib/auth";
 import { getItemCampaigns, getMetrics } from "@/lib/data";
 import { todayISO } from "@/lib/kpi";
-import { advertiserReportWindows, isAdvertiserReportDay, latestAdvertiserReportDate } from "@/lib/reporting";
+import { advertiserReportWindows, formatCutoff, isAdvertiserReportDay, latestAdvertiserReportDate } from "@/lib/reporting";
+import { getReportRules } from "@/lib/report-rules";
 import { addDays } from "@/lib/utils";
 import { PageHeader } from "@/components/dashboard/panel";
 import { memberRoles } from "@/lib/member-roles";
@@ -25,7 +26,9 @@ export default async function NewReportPage({
   const user = await requireUser();
   if (user.role === "supervisor") redirect("/reports");
   const today = todayISO();
-  const minDate = addDays(today, -7);
+  const rules = await getReportRules();
+  const cut = formatCutoff(rules.cutoff);
+  const minDate = addDays(today, -rules.backfillDays);
   const { date: requested, window: requestedWindow, role: requestedRole } = await searchParams;
   // A dual-role member reports each role on its own tab; both parts share one daily report.
   const roles = memberRoles(user);
@@ -81,7 +84,7 @@ export default async function NewReportPage({
           campaign.adAccountId !== null &&
           Boolean(campaign.matchKeyword?.trim()),
       }));
-    const periods = advertiserReportWindows(date);
+    const periods = advertiserReportWindows(date, rules.cutoff);
     const savedPeriods = new Set(existingItems.map((item) => item.performanceDate));
     // Open the requested period (?window=YYYY-MM-DD, or previous_day / today_to_cutoff),
     // otherwise the first one that is still empty.
@@ -97,14 +100,16 @@ export default async function NewReportPage({
         <PageHeader
           title={existing ? "Edit Laporan Harian Advertiser" : "Laporan Harian Advertiser"}
           description={
-            advertiserReportWindows(date).length > 2
-              ? "Laporan Senin mencakup Jumat, Sabtu, Minggu (sehari penuh) dan Senin sampai 15.30 WIB."
-              : "Pilih periode, generate dari Ads atau isi manual, lalu kirim sebelum 15.30 WIB."
+            periods.length > 2
+              ? `Laporan Senin mencakup Jumat, Sabtu, Minggu (sehari penuh) dan Senin sampai ${cut} WIB.`
+              : `Pilih periode, generate dari Ads atau isi manual, lalu kirim sebelum ${cut} WIB.`
           }
         />
         {roleTabs}
         <AdvertiserReportForm
           dualRole={dualRole}
+          cutoff={rules.cutoff}
+          backfillDays={rules.backfillDays}
           key={date}
           date={date}
           minDate={minDate}

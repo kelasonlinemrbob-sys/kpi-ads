@@ -43,6 +43,8 @@ export const users = pgTable("users", {
   secondaryShare: integer("secondary_share").notNull().default(40),
   title: varchar("title", { length: 120 }),
   isActive: boolean("is_active").notNull().default(true),
+  /** Bumped to sign the member out everywhere (e.g. after a password change); sessions carry it. */
+  sessionVersion: integer("session_version").notNull().default(0),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

@@ -40,7 +40,7 @@ export async function saveMetaConnectionAction(_: FormState, formData: FormData)
     type: "campaign_updated",
     title: "Koneksi Meta Ads Diperbarui",
     description: `Token ${res.info.subject ?? ""} — ${expiryText(res.info)}`.trim(),
-    href: "/settings#meta-ads",
+    href: "/settings?tab=integrasi#meta-ads",
   });
   revalidatePath("/settings");
   revalidatePath("/campaigns");

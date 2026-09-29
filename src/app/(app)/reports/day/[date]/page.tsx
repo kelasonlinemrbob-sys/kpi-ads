@@ -21,7 +21,8 @@ import { requireUser } from "@/lib/auth";
 import { getItemCampaigns, getMembers } from "@/lib/data";
 import { todayISO } from "@/lib/kpi";
 import { PLATFORM_DOT, PLATFORM_LABEL } from "@/lib/labels";
-import { advertiserReportWindows, isAdvertiserReportDay } from "@/lib/reporting";
+import { advertiserReportWindows, formatCutoff, isAdvertiserReportDay } from "@/lib/reporting";
+import { getReportRules } from "@/lib/report-rules";
 import { addDays, cn, formatLongDateId, parseISODate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { EmptyState, PageHeader, Panel } from "@/components/dashboard/panel";
@@ -80,7 +81,9 @@ export default async function ReportDayPage({
   const breakdown = await getItemCampaigns(items.map((i) => i.id));
   const nameByReport = new Map(reports.map((r) => [r.id, r.name]));
 
-  const periods = advertiserReportWindows(date).map((period) => {
+  const rules = await getReportRules();
+  const cut = formatCutoff(rules.cutoff);
+  const periods = advertiserReportWindows(date, rules.cutoff).map((period) => {
     const periodItems = items.filter((i) => i.performanceDate === period.performanceDate);
     const rows: Row[] =
       view === "product"
@@ -110,7 +113,7 @@ export default async function ReportDayPage({
   const fullDay = sumMetrics(periods.filter((p) => p.key === "previous_day").map((p) => p.total));
   const todayPeriod = periods.find((p) => p.key === "today_to_cutoff")!;
   const today = todayISO();
-  const editable = !isSupervisor && date <= today && date >= addDays(today, -7) && isAdvertiserReportDay(date);
+  const editable = !isSupervisor && date <= today && date >= addDays(today, -rules.backfillDays) && isAdvertiserReportDay(date);
   const ownReport = !isSupervisor ? reports[0] : undefined;
 
   const step = (from: string, dir: 1 | -1) => {
@@ -135,7 +138,7 @@ export default async function ReportDayPage({
         title={formatLongDateId(date)}
         description={
           periods.length > 2
-            ? "Laporan Senin: Jumat, Sabtu, Minggu (sehari penuh) dan Senin sampai 15.30 WIB."
+            ? `Laporan Senin: Jumat, Sabtu, Minggu (sehari penuh) dan Senin sampai ${cut} WIB.`
             : "Semua product dan campaign yang dilaporkan untuk kemarin dan hari ini."
         }
         actions={
@@ -202,7 +205,7 @@ export default async function ReportDayPage({
             <Stat title="CPR" icon={TargetIcon} value={formatRp(cpr(fullDay))} />
           </div>
           <p className="mb-4 text-xs text-muted-foreground">
-            Ringkasan dari periode sehari penuh. Hari ini s/d 15.30: {formatRp(todayPeriod.total.spent)} ·{" "}
+            Ringkasan dari periode sehari penuh. Hari ini s/d {cut}: {formatRp(todayPeriod.total.spent)} ·{" "}
             {formatId(todayPeriod.total.leads)} lead · CPR {formatRp(cpr(todayPeriod.total))}
           </p>
 

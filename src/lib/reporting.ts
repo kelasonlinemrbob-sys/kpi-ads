@@ -1,7 +1,17 @@
 import { addDays, parseISODate } from "@/lib/utils";
 
-export const ADVERTISER_REPORT_CUTOFF = "15:30";
+/**
+ * Reporting rules a supervisor can change in Settings → Aturan Laporan (stored in app_settings, read on
+ * the server with getReportRules()). These are the defaults.
+ */
+export type ReportRules = { /** "HH:MM" deadline for the advertiser report and end of the "today" period. */ cutoff: string; /** How many days back a report can still be filled in or edited. */ backfillDays: number };
+export const DEFAULT_REPORT_RULES: ReportRules = { cutoff: "15:30", backfillDays: 7 };
+
+export const ADVERTISER_REPORT_CUTOFF = DEFAULT_REPORT_RULES.cutoff;
 export const ADVERTISER_REPORT_TIMEZONE = "WIB";
+
+/** "15:30" → "15.30" (Indonesian time notation). */
+export const formatCutoff = (cutoff: string) => cutoff.replace(":", ".");
 
 export type AdvertiserReportWindow = "previous_day" | "today_to_cutoff";
 
@@ -16,9 +26,9 @@ export function latestAdvertiserReportDate(date: string) {
   return candidate;
 }
 
-export function advertiserReportDeadlinePassed(now = new Date()) {
-  const minutes = now.getHours() * 60 + now.getMinutes();
-  return minutes >= 15 * 60 + 30;
+export function advertiserReportDeadlinePassed(now = new Date(), cutoff = DEFAULT_REPORT_RULES.cutoff) {
+  const [h, m] = cutoff.split(":").map(Number);
+  return now.getHours() * 60 + now.getMinutes() >= h! * 60 + m!;
 }
 
 export type AdvertiserReportPeriod = {
@@ -38,7 +48,7 @@ const DAY_NAME = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"
  * Periods an advertiser report covers. Tuesday–Friday: yesterday (full day) + today until the cutoff.
  * Monday also covers the weekend: Friday, Saturday and Sunday (full days) + Monday until the cutoff.
  */
-export function advertiserReportWindows(reportDate: string): AdvertiserReportPeriod[] {
+export function advertiserReportWindows(reportDate: string, cutoff = DEFAULT_REPORT_RULES.cutoff): AdvertiserReportPeriod[] {
   const isMonday = parseISODate(reportDate).getDay() === 1;
   const fullDays = isMonday ? [-3, -2, -1] : [-1];
   return [
@@ -58,7 +68,7 @@ export function advertiserReportWindows(reportDate: string): AdvertiserReportPer
       performanceDate: reportDate,
       title: "Hasil iklan hari ini",
       label: "Hari ini",
-      timeRange: `00.00–${ADVERTISER_REPORT_CUTOFF.replace(":", ".")} WIB`,
+      timeRange: `00.00–${formatCutoff(cutoff)} WIB`,
     },
   ];
 }

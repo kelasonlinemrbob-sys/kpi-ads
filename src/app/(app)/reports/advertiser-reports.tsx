@@ -7,11 +7,11 @@ import { cpr, ctr, formatId, formatPct, formatRp } from "@/lib/ad-metrics";
 import { getReportDayMetrics, type ReportDayMetrics } from "@/lib/data";
 import { todayISO } from "@/lib/kpi";
 import { advertiserReportWindows, isAdvertiserReportDay } from "@/lib/reporting";
+import { getReportRules } from "@/lib/report-rules";
 import { addDays, cn, formatDate, formatLongDateId } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { EmptyState, Panel } from "@/components/dashboard/panel";
 
-const BACKFILL_DAYS = 7;
 const DAY_SHORT: Record<string, string> = { Jumat: "Jum", Sabtu: "Sab", Minggu: "Min" };
 
 type DayState = "complete" | "partial" | "missing" | "missed";
@@ -46,7 +46,8 @@ export async function AdvertiserReports({
 }) {
   const today = todayISO();
   const last = end < today ? end : today;
-  const editableFrom = addDays(today, -BACKFILL_DAYS);
+  const { backfillDays, cutoff } = await getReportRules();
+  const editableFrom = addDays(today, -backfillDays);
 
   const reports = await db
     .select({ id: dailyReports.id, date: dailyReports.date, summary: dailyReports.summary })
@@ -78,7 +79,7 @@ export async function AdvertiserReports({
       const reportItems = report ? items.filter((i) => i.reportId === report.id) : [];
       const savedDates = new Set(reportItems.map((i) => i.performanceDate));
       const metrics = report ? (metricsByReport.get(report.id) ?? null) : null;
-      const periods = advertiserReportWindows(date).map((p) => ({
+      const periods = advertiserReportWindows(date, cutoff).map((p) => ({
         label: DAY_SHORT[p.label] ?? p.label,
         performanceDate: p.performanceDate,
         // Older reports without item rows count as complete: they were filled in the previous format.
@@ -208,7 +209,7 @@ export async function AdvertiserReports({
       </Panel>
       <p className="mt-2 text-xs text-muted-foreground">
         Angka dihitung dari periode sehari penuh. Klik tanggal untuk melihat semua product dan campaign pada hari itu.
-        Laporan dapat diisi atau diedit hingga {BACKFILL_DAYS} hari.
+        Laporan dapat diisi atau diedit hingga {backfillDays} hari.
       </p>
     </>
   );

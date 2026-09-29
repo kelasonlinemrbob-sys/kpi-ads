@@ -54,7 +54,18 @@ export type TeamRow = {
 type SortKey = "name" | "role" | "score" | "reports" | "last" | "status";
 const STATUS_RANK: Record<KpiStatus, number> = { exceeding: 4, on_track: 3, at_risk: 2, off_track: 1, no_data: 0 };
 
-export function TeamTable({ rows, period, title = "Team Performance" }: { rows: TeamRow[]; period: string; title?: string }) {
+export function TeamTable({
+  rows,
+  period,
+  title = "Team Performance",
+  cutoff = "15.30",
+}: {
+  rows: TeamRow[];
+  period: string;
+  title?: string;
+  /** Advertiser report deadline, e.g. "15.30". */
+  cutoff?: string;
+}) {
   const [query, setQuery] = React.useState("");
   const [role, setRole] = React.useState<"all" | Role>("all");
   const [sort, setSort] = React.useState<{ key: SortKey; dir: 1 | -1 }>({ key: "score", dir: -1 });
@@ -216,7 +227,7 @@ export function TeamTable({ rows, period, title = "Team Performance" }: { rows: 
                       ) : r.overdueToday ? (
                         <span className="font-medium text-destructive">Overdue</span>
                       ) : r.reportDueToday ? (
-                        <span className="text-warning">Due 15:30</span>
+                        <span className="text-warning">Due {cutoff}</span>
                       ) : r.lastReportDate ? (
                         formatDate(r.lastReportDate, { day: "2-digit", month: "short" })
                       ) : (

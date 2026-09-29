@@ -82,7 +82,7 @@ export function AdAccountsDialog({
               <span className="font-medium">Koneksi Meta Ads</span> <MetaStatusBadge status={metaStatus} />
             </p>
             <p className="text-xs text-muted-foreground">{metaStatus.summary}</p>
-            <Link href="/settings#meta-ads" className="inline-flex items-center gap-1 text-xs font-medium underline underline-offset-2">
+            <Link href="/settings?tab=integrasi#meta-ads" className="inline-flex items-center gap-1 text-xs font-medium underline underline-offset-2">
               {metaStatus.state === "ok" ? "Kelola koneksi" : "Cara connect Meta Ads & isi token"} <ArrowRightIcon className="size-3" />
             </Link>
           </div>

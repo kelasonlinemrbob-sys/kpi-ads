@@ -4,8 +4,13 @@ import * as React from "react";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
+export type ThemeMode = "light" | "dark" | "system";
+
 type ThemeContextValue = {
   dark: boolean;
+  /** What the user picked; "system" follows the OS setting. */
+  mode: ThemeMode;
+  setMode: (mode: ThemeMode) => void;
   toggle: () => void;
 };
 
@@ -27,6 +32,7 @@ function getStoredTheme() {
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [dark, setDark] = React.useState(false);
+  const [mode, setModeState] = React.useState<ThemeMode>("system");
 
   React.useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -35,6 +41,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       const nextDark = storedTheme ? storedTheme === "dark" : media.matches;
       applyTheme(nextDark);
       setDark(nextDark);
+      setModeState(storedTheme ?? "system");
     };
 
     const handleStorage = (event: StorageEvent) => {
@@ -53,17 +60,23 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const toggle = React.useCallback(() => {
-    const nextDark = !document.documentElement.classList.contains("dark");
+  const setMode = React.useCallback((next: ThemeMode) => {
+    const nextDark = next === "system" ? window.matchMedia("(prefers-color-scheme: dark)").matches : next === "dark";
     applyTheme(nextDark);
     try {
-      localStorage.setItem("theme", nextDark ? "dark" : "light");
+      if (next === "system") localStorage.removeItem("theme");
+      else localStorage.setItem("theme", next);
     } catch {}
     setDark(nextDark);
+    setModeState(next);
   }, []);
 
+  const toggle = React.useCallback(() => {
+    setMode(document.documentElement.classList.contains("dark") ? "light" : "dark");
+  }, [setMode]);
+
   return (
-    <ThemeContext.Provider value={{ dark, toggle }}>
+    <ThemeContext.Provider value={{ dark, mode, setMode, toggle }}>
       <TooltipProvider delayDuration={200}>{children}</TooltipProvider>
       <Toaster theme={dark ? "dark" : "light"} position="top-right" richColors closeButton />
     </ThemeContext.Provider>

@@ -7,6 +7,7 @@ import { dailyReports, kpiEntries, users, waSessions } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { getMembers, getMetrics, reviewedMemberSql } from "@/lib/data";
 import { hasSecondRole, needsReview } from "@/lib/member-roles";
+import { getReportRules } from "@/lib/report-rules";
 import { ROLE_LABEL } from "@/lib/roles";
 import { periodRange, todayISO } from "@/lib/kpi";
 import { resolveReportRange } from "@/lib/reporting";
@@ -56,11 +57,11 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
       <>
         <PageHeader
           title="My Reports"
-          description="Laporan iklan harianmu per hari kerja. Lengkapi periode yang belum diisi sebelum lewat 7 hari."
+          description={`Laporan iklan harianmu per hari kerja. Lengkapi periode yang belum diisi sebelum lewat ${(await getReportRules()).backfillDays} hari.`}
           actions={
             <>
               <Button asChild variant="outline" className="h-8">
-                <Link href="/settings#whatsapp" title={waReady ? `Laporan otomatis dikirim ke ${wa?.groupName}` : "Hubungkan WhatsApp"}>
+                <Link href="/settings?tab=integrasi#whatsapp" title={waReady ? `Laporan otomatis dikirim ke ${wa?.groupName}` : "Hubungkan WhatsApp"}>
                   <MessageCircleIcon className={waReady ? "text-success" : "text-muted-foreground"} />
                   {waReady ? "WA aktif" : "Hubungkan WA"}
                 </Link>

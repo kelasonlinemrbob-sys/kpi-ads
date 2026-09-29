@@ -10,12 +10,15 @@ type ItemWithCampaigns = AdvertiserReportItem & { campaigns: AdvertiserReportIte
 
 export function AdvertiserReportDetail({
   reportDate,
+  cutoff,
   items,
 }: {
   reportDate: string;
+  /** Report deadline "HH:MM" from the reporting rules. */
+  cutoff?: string;
   items: ItemWithCampaigns[];
 }) {
-  const windows = advertiserReportWindows(reportDate);
+  const windows = advertiserReportWindows(reportDate, cutoff);
 
   return (
     <div className="grid gap-3">

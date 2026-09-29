@@ -10,6 +10,7 @@ import { requireUser } from "@/lib/auth";
 import { getItemCampaigns, getMetrics } from "@/lib/data";
 import { aggregate, todayISO, type Entry } from "@/lib/kpi";
 import { memberRoles, needsReview } from "@/lib/member-roles";
+import { getReportRules } from "@/lib/report-rules";
 import { ROLE_LABEL } from "@/lib/roles";
 import { addDays, cn, formatDate, formatValue } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -57,7 +58,8 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
   const byKey = new Map(metrics.map((m) => [m.key, m]));
   const asEntries: Entry[] = entries.map((e) => ({ userId: e.userId, metricId: e.metricId, date: e.date, value: e.value }));
   const requiresReview = needsReview(member);
-  const canEdit = user.id === report.userId && (!requiresReview || report.status !== "approved") && report.date >= addDays(todayISO(), -7);
+  const rules = await getReportRules();
+  const canEdit = user.id === report.userId && (!requiresReview || report.status !== "approved") && report.date >= addDays(todayISO(), -rules.backfillDays);
 
   return (
     <>
@@ -101,6 +103,7 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
           {roles.includes("advertiser") && advertiserItems.length > 0 && (
             <AdvertiserReportDetail
               reportDate={report.date}
+              cutoff={rules.cutoff}
               items={advertiserItems.map((item) => ({ ...item, campaigns: itemCampaigns.get(item.id) ?? [] }))}
             />
           )}

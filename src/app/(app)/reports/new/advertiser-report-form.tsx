@@ -101,7 +101,13 @@ export function AdvertiserReportForm({
   existing,
   existingItems,
   dualRole = false,
+  cutoff,
+  backfillDays = 7,
 }: {
+  /** How many days back the report can still be edited. */
+  backfillDays?: number;
+  /** Report deadline "HH:MM" from the reporting rules. */
+  cutoff?: string;
   /** Member also holds another role: keep ?role= in the URL when switching dates. */
   dualRole?: boolean;
   date: string;
@@ -120,7 +126,7 @@ export function AdvertiserReportForm({
     unmapped: { account: string; spent: number; campaigns: { name: string; spent: number }[] }[];
   } | null>(null);
   const nextKey = React.useRef(2);
-  const periods = advertiserReportWindows(date);
+  const periods = advertiserReportWindows(date, cutoff);
   const [activePeriod, setActivePeriod] = React.useState(
     periods.some((period) => period.performanceDate === initialPeriod) ? initialPeriod : periods[0]!.performanceDate,
   );
@@ -382,7 +388,7 @@ export function AdvertiserReportForm({
           <p role="alert" className="text-sm text-destructive">{state.error}</p>
         ) : (
           <p className="text-sm text-muted-foreground">
-            {active.timeRange} · dapat diedit hingga 7 hari
+            {active.timeRange} · dapat diedit hingga {backfillDays} hari
           </p>
         )}
         <Button type="submit" className="sm:min-w-40" disabled={pending || generating}>

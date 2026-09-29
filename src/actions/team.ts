@@ -1,12 +1,12 @@
 "use server";
 
 import bcrypt from "bcryptjs";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
 import { advertiserLevelEnum, kpiMetrics, kpiTargets, roleEnum, users } from "@/db/schema";
-import { requireUser } from "@/lib/auth";
+import { createSession, requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
 import { isPeriod } from "@/lib/kpi";
 import { DEFAULT_SECONDARY_SHARE } from "@/lib/member-roles";
@@ -69,9 +69,16 @@ export async function saveMember(_: FormState, formData: FormData): Promise<Form
         ...data,
         title: data.title || null,
         isActive: !!isActive,
+        // A password reset or deactivation ends the member's open sessions.
         ...(password ? { passwordHash: await bcrypt.hash(password, 10) } : {}),
+        ...(password || !isActive ? { sessionVersion: sql`${users.sessionVersion} + 1` } : {}),
       })
       .where(eq(users.id, id));
+    // A supervisor resetting their own password stays signed in on this device.
+    if (id === me.id && password) {
+      const [self] = await db.select({ sessionVersion: users.sessionVersion }).from(users).where(eq(users.id, id));
+      await createSession(id, self!.sessionVersion);
+    }
   } else {
     if (!password) return { error: "Set an initial password for the new member." };
     const [created] = await db

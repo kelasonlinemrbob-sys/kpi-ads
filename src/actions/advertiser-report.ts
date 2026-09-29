@@ -19,11 +19,11 @@ import { logActivity } from "@/lib/data";
 import { hasSecondRole } from "@/lib/member-roles";
 import { queueReportMessage } from "@/lib/whatsapp";
 import { todayISO } from "@/lib/kpi";
+import { getReportRules } from "@/lib/report-rules";
 import { advertiserReportWindows, isAdvertiserReportDay } from "@/lib/reporting";
 import { addDays, formatDate } from "@/lib/utils";
 import type { FormState } from "./auth";
 
-const BACKFILL_DAYS = 7;
 
 const breakdownSchema = z.object({
   id: z.string().trim().min(1).max(64),
@@ -84,9 +84,10 @@ export async function saveAdvertiserReport(user: SessionUser, formData: FormData
   const { date, notes } = parsed.data;
 
   const today = todayISO();
+  const { backfillDays } = await getReportRules();
   if (date > today) return { error: "Laporan tidak dapat dibuat untuk tanggal mendatang." };
-  if (date < addDays(today, -BACKFILL_DAYS)) {
-    return { error: `Laporan hanya dapat diisi mundur maksimal ${BACKFILL_DAYS} hari.` };
+  if (date < addDays(today, -backfillDays)) {
+    return { error: `Laporan hanya dapat diisi mundur maksimal ${backfillDays} hari.` };
   }
   if (!isAdvertiserReportDay(date)) {
     return { error: "Laporan advertiser hanya diwajibkan untuk hari Senin sampai Jumat." };

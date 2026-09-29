@@ -99,6 +99,13 @@
       "when": 1790684808175,
       "tag": "0013_secondary_role",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790686083435,
+      "tag": "0014_session_version",
+      "breakpoints": true
     }
   ]
 }

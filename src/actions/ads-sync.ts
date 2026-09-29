@@ -7,6 +7,7 @@ import { fetchAccountCampaigns, type AdsCampaignMetrics, type AdsMetrics } from 
 import { matchProduct } from "@/lib/ads-matching";
 import { requireUser } from "@/lib/auth";
 import { todayISO } from "@/lib/kpi";
+import { getReportRules } from "@/lib/report-rules";
 import { PLATFORM_LABEL } from "@/lib/labels";
 import { advertiserReportWindows } from "@/lib/reporting";
 import { addDays } from "@/lib/utils";
@@ -33,7 +34,8 @@ export async function generateAdsReport(date: string, performanceDate: string): 
   const user = await requireUser();
   if (user.role !== "advertiser") return { ok: false, error: "Hanya advertiser yang dapat generate laporan iklan." };
   const today = todayISO();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > today || date < addDays(today, -7)) {
+  const { backfillDays } = await getReportRules();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > today || date < addDays(today, -backfillDays)) {
     return { ok: false, error: "Tanggal laporan tidak valid." };
   }
   if (!advertiserReportWindows(date).some((period) => period.performanceDate === performanceDate)) {
