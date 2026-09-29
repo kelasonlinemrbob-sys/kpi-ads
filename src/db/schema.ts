@@ -25,6 +25,9 @@ export const taskStatusEnum = pgEnum("task_status", ["todo", "in_progress", "rev
 export const priorityEnum = pgEnum("priority", ["low", "medium", "high", "urgent"]);
 export const platformEnum = pgEnum("platform", ["meta", "google", "tiktok", "shopee", "other"]);
 export const campaignStatusEnum = pgEnum("campaign_status", ["draft", "active", "paused", "ended"]);
+/** Seniority within the advertiser role; only senior advertisers get the performance appraisal. */
+export const advertiserLevelEnum = pgEnum("advertiser_level", ["junior", "senior"]);
+export const appraisalStatusEnum = pgEnum("appraisal_status", ["draft", "final"]);
 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -32,6 +35,8 @@ export const users = pgTable("users", {
   email: varchar("email", { length: 180 }).notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   role: roleEnum("role").notNull(),
+  /** Advertisers only; null counts as junior. */
+  advertiserLevel: advertiserLevelEnum("advertiser_level"),
   title: varchar("title", { length: 120 }),
   isActive: boolean("is_active").notNull().default(true),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
@@ -332,6 +337,38 @@ export const waWorker = pgTable("wa_worker", {
   heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull(),
 });
 
+/**
+ * Performance appraisal of a senior advertiser for one period (see lib/appraisal.ts for the form):
+ * part 1 scores skill & responsibility indicators 1–5, part 2 scores four KPIs in percent.
+ */
+export const performanceAppraisals = pgTable(
+  "performance_appraisals",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    reviewerId: integer("reviewer_id").references(() => users.id, { onDelete: "set null" }),
+    periodStart: date("period_start").notNull(),
+    periodEnd: date("period_end").notNull(),
+    status: appraisalStatusEnum("status").notNull().default("draft"),
+    /** Indicator id → score 1–5. */
+    skillScores: jsonb("skill_scores").$type<Record<string, number>>().notNull().default({}),
+    skillNote: text("skill_note"),
+    /** KPI key → target / real, and the score in percent for KPIs rated by hand. */
+    kpi: jsonb("kpi").$type<Record<string, { target: number | null; real: number | null; score: number | null }>>().notNull().default({}),
+    kpiNote: text("kpi_note"),
+    /** Weighted skill score on the 1–5 scale; null until every indicator is scored. */
+    skillScore: doublePrecision("skill_score"),
+    /** Total KPI achievement 0–100; null until every KPI has a score. */
+    kpiScore: doublePrecision("kpi_score"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    finalizedAt: timestamp("finalized_at", { withTimezone: true }),
+  },
+  (t) => [index("performance_appraisals_user").on(t.userId)],
+);
+
 /** App-wide key/value settings, e.g. the Meta Ads connection. Secrets are stored encrypted (see lib/secret-box). */
 export const appSettings = pgTable("app_settings", {
   key: varchar("key", { length: 80 }).primaryKey(),
@@ -341,6 +378,8 @@ export const appSettings = pgTable("app_settings", {
 });
 
 export type User = typeof users.$inferSelect;
+export type AdvertiserLevel = (typeof advertiserLevelEnum.enumValues)[number];
+export type PerformanceAppraisal = typeof performanceAppraisals.$inferSelect;
 export type WaSession = typeof waSessions.$inferSelect;
 export type Role = (typeof roleEnum.enumValues)[number];
 export type KpiMetric = typeof kpiMetrics.$inferSelect;

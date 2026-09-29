@@ -4,9 +4,9 @@ import * as React from "react";
 import { useActionState } from "react";
 import { LoaderIcon, UserPlusIcon } from "lucide-react";
 import { toast } from "sonner";
-import type { Role } from "@/db/schema";
+import type { AdvertiserLevel, Role } from "@/db/schema";
 import { saveMember } from "@/actions/team";
-import { ROLES, ROLE_LABEL } from "@/lib/roles";
+import { ADVERTISER_LEVEL_LABEL, ROLES, ROLE_LABEL } from "@/lib/roles";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -14,11 +14,21 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-export type EditableMember = { id: number; name: string; email: string; role: Role; title: string | null; isActive: boolean; isSelf?: boolean };
+export type EditableMember = {
+  id: number;
+  name: string;
+  email: string;
+  role: Role;
+  advertiserLevel: AdvertiserLevel | null;
+  title: string | null;
+  isActive: boolean;
+  isSelf?: boolean;
+};
 
 export function MemberDialog({ member, onClose }: { member?: EditableMember; onClose?: () => void }) {
   const [open, setOpen] = React.useState(!!member);
   const [state, action, pending] = useActionState(saveMember, undefined);
+  const [role, setRole] = React.useState<Role>(member?.role ?? "advertiser");
   const change = (o: boolean) => {
     setOpen(o);
     if (!o) onClose?.();
@@ -61,7 +71,7 @@ export function MemberDialog({ member, onClose }: { member?: EditableMember; onC
             </div>
             <div className="grid gap-2">
               <Label>Role</Label>
-              <Select name="role" defaultValue={member?.role ?? "advertiser"} disabled={member?.isSelf}>
+              <Select name="role" value={role} onValueChange={(v) => setRole(v as Role)} disabled={member?.isSelf}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -75,6 +85,24 @@ export function MemberDialog({ member, onClose }: { member?: EditableMember; onC
               </Select>
               {member?.isSelf && <input type="hidden" name="role" value={member.role} />}
             </div>
+            {role === "advertiser" && (
+              <div className="grid gap-2">
+                <Label>Level advertiser</Label>
+                <Select name="advertiserLevel" defaultValue={member?.advertiserLevel ?? "junior"}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.keys(ADVERTISER_LEVEL_LABEL) as AdvertiserLevel[]).map((level) => (
+                      <SelectItem key={level} value={level}>
+                        {ADVERTISER_LEVEL_LABEL[level]}
+                        {level === "senior" && " — ikut penilaian kinerja"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="grid gap-2">
               <Label htmlFor="m-title">Job title</Label>
               <Input id="m-title" name="title" placeholder="e.g. Meta Ads Specialist" defaultValue={member?.title ?? ""} />

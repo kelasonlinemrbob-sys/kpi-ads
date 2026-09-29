@@ -16,9 +16,9 @@ import {
   SunIcon,
 } from "lucide-react";
 import { logout } from "@/actions/auth";
-import type { Role } from "@/db/schema";
+import type { AdvertiserLevel, Role } from "@/db/schema";
 import { cn } from "@/lib/utils";
-import { ROLE_LABEL } from "@/lib/roles";
+import { roleLabel } from "@/lib/roles";
 import { Logo } from "@/components/logo";
 import { useTheme } from "@/components/theme-provider";
 import { UserAvatar } from "@/components/user-avatar";
@@ -36,14 +36,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { breadcrumbFor, buildNav, type NavCounts, type NavItem } from "./nav";
 import { CommandMenu } from "./command-menu";
 
-export type ShellUser = { id: number; name: string; email: string; role: Role };
+export type ShellUser = { id: number; name: string; email: string; role: Role; advertiserLevel: AdvertiserLevel | null };
 
 export function AppShell({ user, counts, children }: { user: ShellUser; counts: NavCounts; children: React.ReactNode }) {
   const [collapsed, setCollapsed] = React.useState(false);
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const [searchOpen, setSearchOpen] = React.useState(false);
   const pathname = usePathname();
-  const nav = React.useMemo(() => buildNav(user.role, counts), [user.role, counts]);
+  const senior = user.role === "advertiser" && user.advertiserLevel === "senior";
+  const nav = React.useMemo(() => buildNav(user.role, counts, senior), [user.role, counts, senior]);
 
   React.useEffect(() => {
     try {
@@ -87,7 +88,7 @@ export function AppShell({ user, counts, children }: { user: ShellUser; counts: 
     <div className="flex min-h-dvh bg-sidebar">
       <aside
         className={cn(
-          "sticky top-0 hidden h-dvh shrink-0 flex-col transition-[width] duration-200 lg:flex",
+          "sticky top-0 hidden h-dvh shrink-0 flex-col transition-[width] duration-200 lg:flex print:hidden",
           collapsed ? "w-[60px]" : "w-[240px]",
         )}
       >
@@ -101,7 +102,7 @@ export function AppShell({ user, counts, children }: { user: ShellUser; counts: 
         </SheetContent>
       </Dialog>
 
-      <div className="flex min-w-0 flex-1 flex-col bg-background lg:my-1.5 lg:mr-1.5 lg:rounded-xl lg:border">
+      <div className="flex min-w-0 flex-1 flex-col bg-background lg:my-1.5 lg:mr-1.5 lg:rounded-xl lg:border print:m-0 print:border-0">
         <MobileHeader onMenu={() => setMobileOpen(true)} counts={counts} role={user.role} />
         <main className="mx-auto w-full max-w-[1600px] flex-1 px-3 pt-3 pb-6 sm:px-5 lg:pt-5">{children}</main>
       </div>
@@ -311,7 +312,7 @@ function UserMenu({ user, collapsed }: { user: ShellUser; collapsed: boolean }) 
       <DropdownMenuContent side="top" align="start" className="w-60">
         <DropdownMenuLabel className="font-normal">
           <span className="block text-sm font-medium">{user.name}</span>
-          <span className="block text-xs text-muted-foreground">{ROLE_LABEL[user.role]}</span>
+          <span className="block text-xs text-muted-foreground">{roleLabel(user.role, user.advertiserLevel)}</span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
@@ -337,7 +338,7 @@ function MobileHeader({ onMenu, counts, role }: { onMenu: () => void; counts: Na
   const { dark, toggle } = useTheme();
   const total = counts.pendingReviews + counts.openTasks + counts.revisions;
   return (
-    <header className="sticky top-0 z-30 flex h-11 items-center gap-2 border-b bg-background/85 px-3 backdrop-blur lg:hidden">
+    <header className="sticky top-0 z-30 flex h-11 items-center gap-2 border-b bg-background/85 px-3 backdrop-blur lg:hidden print:hidden">
       <button type="button" onClick={onMenu} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent" aria-label="Open menu">
         <PanelLeftIcon className="size-[18px]" />
       </button>

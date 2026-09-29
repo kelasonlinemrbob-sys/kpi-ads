@@ -11,10 +11,13 @@ import {
   kpiEntries,
   kpiMetrics,
   kpiTargets,
+  performanceAppraisals,
   tasks,
   users,
+  type AdvertiserLevel,
   type Role,
 } from "./schema";
+import { computeAppraisal, SKILL_ASPECTS } from "../lib/appraisal";
 
 type MetricSeed = typeof kpiMetrics.$inferInsert;
 
@@ -38,10 +41,10 @@ const METRICS: MetricSeed[] = [
   { key: "organic_sessions", name: "Organic Sessions", role: "seo", unit: "number", aggregation: "sum", weight: 25, defaultTarget: 45_000, sortOrder: 4, description: "Sessions from organic search (GA4)." },
 ];
 
-const PEOPLE: { name: string; email: string; role: Role; title: string; factor: number }[] = [
+const PEOPLE: { name: string; email: string; role: Role; advertiserLevel?: AdvertiserLevel; title: string; factor: number }[] = [
   { name: "Achmad Hakim", email: "supervisor@kpi.local", role: "supervisor", title: "Performance Marketing Lead", factor: 1 },
-  { name: "Rizky Pratama", email: "rizky@kpi.local", role: "advertiser", title: "Meta Ads Specialist", factor: 1.12 },
-  { name: "Dewi Lestari", email: "dewi@kpi.local", role: "advertiser", title: "Google Ads Specialist", factor: 0.96 },
+  { name: "Rizky Pratama", email: "rizky@kpi.local", role: "advertiser", advertiserLevel: "senior", title: "Meta Ads Specialist", factor: 1.12 },
+  { name: "Dewi Lestari", email: "dewi@kpi.local", role: "advertiser", advertiserLevel: "senior", title: "Google Ads Specialist", factor: 0.96 },
   { name: "Bima Saputra", email: "bima@kpi.local", role: "advertiser", title: "TikTok Ads Specialist", factor: 0.74 },
   { name: "Salsa Nabila", email: "salsa@kpi.local", role: "advertiser", title: "Marketplace Ads Specialist", factor: 0.88 },
   { name: "Fajar Nugroho", email: "fajar@kpi.local", role: "webmaster", title: "Web Master", factor: 1.05 },
@@ -124,7 +127,13 @@ async function main() {
   const passwordHash = await bcrypt.hash("password123", 10);
   const userRows = await db
     .insert(users)
-    .values(PEOPLE.map(({ factor: _f, ...p }) => ({ ...p, passwordHash })))
+    .values(
+      PEOPLE.map(({ factor: _f, ...p }) => ({
+        ...p,
+        advertiserLevel: p.role === "advertiser" ? (p.advertiserLevel ?? "junior") : null,
+        passwordHash,
+      })),
+    )
     .returning();
   const supervisor = userRows.find((u) => u.role === "supervisor")!;
   const factorOf = new Map(PEOPLE.map((p) => [p.email, p.factor]));
@@ -262,6 +271,39 @@ async function main() {
     { actorId: supervisor.id, subjectUserId: rizky.id, type: "target_updated", title: "KPI Target Updated", description: "Leads target for Rizky Pratama set to 1,000", href: "/targets", createdAt: minutesAgo(26 * 60) },
   );
   await db.insert(activities).values(activityRows);
+
+  // A finished appraisal for a senior advertiser, scored like the sample HRGA form.
+  const sampleScores = [
+    [5, 4, 4, 3, 3],
+    [4, 3, 3, 3, 3],
+    [4, 3, 3, 3, 4],
+    [4, 4, 4, 4, 4],
+    [2, 2, 3, 3, 3],
+    [3, 3, 4, 4, 3],
+  ];
+  const skillScores = Object.fromEntries(SKILL_ASPECTS.flatMap((a, ai) => a.indicators.map((ind, ii) => [ind.id, sampleScores[ai]![ii]!])));
+  const kpi = {
+    leads: { target: 1_000, real: 930, score: null },
+    cpl: { target: 25_000, real: 27_500, score: null },
+    quality: { target: 60, real: 51, score: null },
+    budget: { target: null, real: null, score: 85 },
+  };
+  const result = computeAppraisal(skillScores, kpi);
+  const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  await db.insert(performanceAppraisals).values({
+    userId: rizky.id,
+    reviewerId: supervisor.id,
+    periodStart: iso(lastMonth),
+    periodEnd: iso(new Date(now.getFullYear(), now.getMonth(), 0)),
+    status: "final",
+    skillScores,
+    skillNote: "Kuat di problem solving. Perlu lebih aktif membimbing advertiser junior.",
+    kpi,
+    kpiNote: "CPL sedikit di atas target; fokus perbaikan kualitas lead bersama tim sales.",
+    skillScore: result.skillTotal,
+    kpiScore: result.kpiTotal,
+    finalizedAt: now,
+  });
 
   const [{ n }] = (await db.execute(sql`select count(*)::int as n from daily_reports`)).rows as { n: number }[];
   console.log(`Done: ${userRows.length} users, ${n} reports.`);

@@ -1,4 +1,5 @@
 import {
+  AwardIcon,
   BookOpenIcon,
   ClipboardListIcon,
   GaugeIcon,
@@ -19,7 +20,7 @@ export type NavSection = { label: string; items: NavItem[] };
 
 export type NavCounts = { pendingReviews: number; openTasks: number; revisions: number };
 
-export function buildNav(role: Role, counts: NavCounts): NavSection[] {
+export function buildNav(role: Role, counts: NavCounts, seniorAdvertiser = false): NavSection[] {
   const main: NavItem[] = [{ title: "Overview", href: "/dashboard", icon: LayoutGridIcon }];
 
   main.push({
@@ -57,6 +58,11 @@ export function buildNav(role: Role, counts: NavCounts): NavSection[] {
     });
   }
 
+  // Performance appraisal: supervisors fill it in, senior advertisers read their own.
+  if (can.manageAppraisals(role) || seniorAdvertiser) {
+    main.push({ title: "Penilaian Kinerja", href: "/appraisals", icon: AwardIcon });
+  }
+
   return [
     { label: "Main Navigation", items: main },
     {
@@ -87,6 +93,8 @@ const TITLES: [prefix: string, section: string, page: string][] = [
   ["/tasks", "Tasks", "Task Board"],
   ["/team", "Team", "Members"],
   ["/targets", "Team", "KPI Targets"],
+  ["/appraisals/", "Penilaian Kinerja", "Borang Penilaian"],
+  ["/appraisals", "Penilaian Kinerja", "Daftar Penilaian"],
   ["/scorecard", "Analytics", "KPI Scorecard"],
   ["/leaderboard", "Analytics", "Leaderboard"],
   ["/guide", "Support", "KPI Guide"],

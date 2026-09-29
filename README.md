@@ -16,6 +16,25 @@ Stack: **Next.js 16 (App Router) · Postgres · Drizzle ORM · Tailwind v4 · ko
 | Team: tambah anggota, ganti role, nonaktifkan | ✅ | — | — | — |
 | KPI Targets: bobot, target default, target per orang per bulan | ✅ | — | — | — |
 | KPI Scorecard, Leaderboard, KPI Guide, export CSV | ✅ (semua) | ✅ (diri sendiri) | ✅ | ✅ |
+| Penilaian Kinerja (khusus Advertiser Senior) | isi & finalisasi | lihat milik sendiri (Senior, setelah final) | — | — |
+
+Advertiser punya dua level, **Junior** dan **Senior**, diatur di **Team → Members** (edit anggota → Level advertiser).
+Semua fitur advertiser sama; bedanya hanya Senior yang ikut **Penilaian Kinerja**.
+
+## Penilaian Kinerja Advertiser Senior
+
+Menerapkan dokumen HRGA *Rancangan Skema Sistem Penilaian Kinerja — Advertiser Senior* (SG/ADV-SR/HRGA/2026),
+template-nya di `src/lib/appraisal.ts`. Supervisor membuat penilaian per karyawan per periode di menu
+**Penilaian Kinerja**, mengisi, menyimpan draft, lalu **Finalisasi** (baru terlihat oleh karyawan; bisa dibuka kembali).
+Tombol **Cetak** menghasilkan borang siap tanda tangan.
+
+1. **Borang Pencairan Tunjangan Skill & Responsibility** — 6 aspek (bobot 20/20/15/15/15/15), masing-masing 5 indikator
+   diberi skor 1–5. Skor aspek = rata-rata indikatornya; *Skor x Bobot* = rata-rata × bobot%; total = jumlahnya (skala 1–5),
+   dibulatkan ke Skala Penilaian (5 Sangat Baik … 1 Sangat Kurang).
+2. **Borang KPI Performance** — 4 KPI @25%: Jumlah Lead (real ÷ target), Efisiensi CPL (target ÷ real), Kualitas Lead &
+   Conversation (rasio lead qualified real ÷ target) dan Improvement & Efisiensi Budget (skor % diisi penilai); tiap skor
+   maksimal 100%. Total menentukan tier: ≥95 Istimewa, 85–94 Sangat Baik, 75–84 Baik, 60–74 Cukup, <60 Kurang.
+   *Real* Jumlah Lead dan CPL terisi otomatis dari laporan harian (periode sehari penuh) pada rentang penilaian.
 
 ## KPI bawaan (bisa diubah di halaman **KPI Targets**)
 

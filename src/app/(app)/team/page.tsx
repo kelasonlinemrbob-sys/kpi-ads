@@ -20,6 +20,7 @@ export default async function TeamPage() {
       name: users.name,
       email: users.email,
       role: users.role,
+      advertiserLevel: users.advertiserLevel,
       title: users.title,
       isActive: users.isActive,
       lastLoginAt: users.lastLoginAt,
@@ -47,6 +48,12 @@ export default async function TeamPage() {
             <p className="px-4 py-3 text-2xl font-medium tabular-nums">
               {all.filter((u) => u.role === r && u.isActive).length}
               <span className="ml-1.5 text-sm font-normal text-muted-foreground">active</span>
+              {r === "advertiser" && (
+                <span className="block text-xs font-normal text-muted-foreground">
+                  {all.filter((u) => u.role === r && u.isActive && u.advertiserLevel === "senior").length} senior ·{" "}
+                  {all.filter((u) => u.role === r && u.isActive && u.advertiserLevel !== "senior").length} junior
+                </span>
+              )}
             </p>
           </Panel>
         ))}

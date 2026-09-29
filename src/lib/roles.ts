@@ -1,4 +1,4 @@
-import type { Role } from "@/db/schema";
+import type { AdvertiserLevel, Role } from "@/db/schema";
 
 export const ROLES: Role[] = ["supervisor", "advertiser", "webmaster", "seo"];
 
@@ -8,6 +8,16 @@ export const ROLE_LABEL: Record<Role, string> = {
   webmaster: "Web Master",
   seo: "SEO Specialist",
 };
+
+export const ADVERTISER_LEVEL_LABEL: Record<AdvertiserLevel, string> = { junior: "Junior", senior: "Senior" };
+
+/** "Advertiser Senior" / "Advertiser Junior" for advertisers, the plain role label otherwise. */
+export function roleLabel(role: Role, level?: AdvertiserLevel | null) {
+  return role === "advertiser" ? `${ROLE_LABEL.advertiser} ${ADVERTISER_LEVEL_LABEL[level ?? "junior"]}` : ROLE_LABEL[role];
+}
+
+export const isSeniorAdvertiser = (user: { role: Role; advertiserLevel?: AdvertiserLevel | null }) =>
+  user.role === "advertiser" && user.advertiserLevel === "senior";
 
 /** Roles whose members submit daily KPI reports. */
 export const MEMBER_ROLES: Exclude<Role, "supervisor">[] = ["advertiser", "webmaster", "seo"];
@@ -27,4 +37,6 @@ export const can = {
   viewCampaigns: (r: Role) => r === "supervisor" || r === "advertiser" || r === "webmaster",
   editCampaigns: (r: Role) => r === "supervisor" || r === "advertiser",
   viewAllMembers: (r: Role) => r === "supervisor",
+  /** Fill in and finalise performance appraisals (senior advertisers only). */
+  manageAppraisals: (r: Role) => r === "supervisor",
 };

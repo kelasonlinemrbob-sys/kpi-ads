@@ -7,7 +7,7 @@ import { EllipsisVerticalIcon, GaugeIcon, PencilIcon, PowerIcon, UsersIcon } fro
 import { toast } from "sonner";
 import { setMemberActive } from "@/actions/team";
 import type { KpiStatus } from "@/lib/kpi";
-import { ROLE_BADGE, ROLE_LABEL } from "@/lib/roles";
+import { ROLE_BADGE, roleLabel } from "@/lib/roles";
 import { formatNumber } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -57,7 +57,7 @@ export function MembersTable({ rows }: { rows: MemberRow[] }) {
                 </TableCell>
                 <TableCell>
                   <Badge variant="outline" className={ROLE_BADGE[m.role]}>
-                    {ROLE_LABEL[m.role]}
+                    {roleLabel(m.role, m.advertiserLevel)}
                   </Badge>
                   {m.title && <span className="mt-1 block text-xs text-muted-foreground">{m.title}</span>}
                 </TableCell>
