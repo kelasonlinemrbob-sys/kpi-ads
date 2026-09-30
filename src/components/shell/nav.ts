@@ -1,5 +1,7 @@
 import {
+  AwardIcon,
   BookOpenIcon,
+  ClapperboardIcon,
   ClipboardListIcon,
   GaugeIcon,
   LayoutGridIcon,
@@ -19,7 +21,7 @@ export type NavSection = { label: string; items: NavItem[] };
 
 export type NavCounts = { pendingReviews: number; openTasks: number; revisions: number };
 
-export function buildNav(role: Role, counts: NavCounts): NavSection[] {
+export function buildNav(role: Role, counts: NavCounts, seniorAdvertiser = false): NavSection[] {
   const main: NavItem[] = [{ title: "Overview", href: "/dashboard", icon: LayoutGridIcon }];
 
   main.push({
@@ -43,6 +45,7 @@ export function buildNav(role: Role, counts: NavCounts): NavSection[] {
   });
 
   if (can.viewCampaigns(role)) main.push({ title: "Campaigns", href: "/campaigns", icon: MegaphoneIcon });
+  if (can.viewCreatives(role)) main.push({ title: "Creative", href: "/creatives", icon: ClapperboardIcon });
   main.push({ title: "Tasks", href: "/tasks", icon: ListTodoIcon, badge: counts.openTasks || undefined });
 
   if (can.manageTeam(role)) {
@@ -55,6 +58,11 @@ export function buildNav(role: Role, counts: NavCounts): NavSection[] {
         { title: "KPI Targets", href: "/targets" },
       ],
     });
+  }
+
+  // Performance appraisal: supervisors fill it in, senior advertisers read their own.
+  if (can.manageAppraisals(role) || seniorAdvertiser) {
+    main.push({ title: "Penilaian Kinerja", href: "/appraisals", icon: AwardIcon });
   }
 
   return [
@@ -84,9 +92,12 @@ const TITLES: [prefix: string, section: string, page: string][] = [
   ["/reports/", "Daily Reports", "Report Detail"],
   ["/reports", "Daily Reports", "Reports"],
   ["/campaigns", "Campaigns", "All Campaigns"],
+  ["/creatives", "Creative", "Konten Iklan"],
   ["/tasks", "Tasks", "Task Board"],
   ["/team", "Team", "Members"],
   ["/targets", "Team", "KPI Targets"],
+  ["/appraisals/", "Penilaian Kinerja", "Borang Penilaian"],
+  ["/appraisals", "Penilaian Kinerja", "Daftar Penilaian"],
   ["/scorecard", "Analytics", "KPI Scorecard"],
   ["/leaderboard", "Analytics", "Leaderboard"],
   ["/guide", "Support", "KPI Guide"],

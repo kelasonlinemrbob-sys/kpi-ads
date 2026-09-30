@@ -27,12 +27,12 @@ export const TONE_BAR = {
 };
 
 /** Status always ships as icon + label, never color alone. */
-export function KpiStatusLabel({ status, className }: { status: KpiStatus; className?: string }) {
+export function KpiStatusLabel({ status, className, mono }: { status: KpiStatus; className?: string; mono?: boolean }) {
   const meta = STATUS_META[status];
   const Icon = ICONS[status];
   return (
     <span className={cn("inline-flex items-center gap-1.5 text-sm", className)}>
-      <Icon className={cn("size-4", TONE_TEXT[meta.tone])} />
+      <Icon className={cn("size-4", mono ? (status === "no_data" ? "text-muted-foreground" : "text-foreground") : TONE_TEXT[meta.tone])} />
       {meta.label}
     </span>
   );

@@ -3,27 +3,35 @@
 import * as React from "react";
 import { useActionState } from "react";
 import { useRouter } from "next/navigation";
-import { LoaderIcon, PlugIcon, Trash2Icon } from "lucide-react";
+import Link from "next/link";
+import { ArrowRightIcon, LoaderIcon, PlugIcon, Trash2Icon, TriangleAlertIcon } from "lucide-react";
 import { toast } from "sonner";
 import { deleteAdAccount, saveAdAccount } from "@/actions/ad-accounts";
 import { PLATFORM_DOT, PLATFORM_LABEL } from "@/lib/labels";
+import type { MetaConnectionStatus } from "@/lib/meta-connection";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { MetaStatusBadge } from "@/components/meta-status";
 import type { AdAccountOption } from "./campaign-dialog";
 
 export function AdAccountsDialog({
   accounts,
   productCount,
   deletableIds,
+  syncErrors,
+  metaStatus,
 }: {
   accounts: AdAccountOption[];
   /** Linked products per ad account id. */
   productCount: Record<number, number>;
   /** Accounts the current user may delete (supervisor: all, otherwise the ones they added). */
   deletableIds: number[];
+  /** Last sync error per ad account id. */
+  syncErrors: Record<number, string>;
+  metaStatus: MetaConnectionStatus;
 }) {
   const router = useRouter();
   const formRef = React.useRef<HTMLFormElement>(null);
@@ -63,6 +71,23 @@ export function AdAccountsDialog({
           </DialogDescription>
         </DialogHeader>
 
+        <div className="flex items-start gap-2 rounded-lg border p-3 text-sm">
+          {metaStatus.state === "ok" ? (
+            <PlugIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          ) : (
+            <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-warning" />
+          )}
+          <div className="grid min-w-0 flex-1 gap-1">
+            <p className="flex flex-wrap items-center gap-2">
+              <span className="font-medium">Koneksi Meta Ads</span> <MetaStatusBadge status={metaStatus} />
+            </p>
+            <p className="text-xs text-muted-foreground">{metaStatus.summary}</p>
+            <Link href="/settings?tab=integrasi#meta-ads" className="inline-flex items-center gap-1 text-xs font-medium underline underline-offset-2">
+              {metaStatus.state === "ok" ? "Kelola koneksi" : "Cara connect Meta Ads & isi token"} <ArrowRightIcon className="size-3" />
+            </Link>
+          </div>
+        </div>
+
         <div className="divide-y rounded-lg border">
           {accounts.length === 0 && <p className="p-4 text-sm text-muted-foreground">Belum ada akun iklan.</p>}
           {accounts.map((account) => (
@@ -74,6 +99,7 @@ export function AdAccountsDialog({
                   {PLATFORM_LABEL[account.platform]} · {account.platform === "meta" ? `act_${account.accountId}` : account.accountId} ·{" "}
                   {productCount[account.id] ?? 0} product
                 </p>
+                {syncErrors[account.id] && <p className="mt-0.5 text-xs text-destructive">{syncErrors[account.id]}</p>}
               </div>
               {deletableIds.includes(account.id) && (
                 <Button

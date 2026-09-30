@@ -16,8 +16,8 @@ function secret() {
   return new TextEncoder().encode(s);
 }
 
-export async function createSession(userId: number) {
-  const token = await new SignJWT({ uid: userId })
+export async function createSession(userId: number, sessionVersion = 0) {
+  const token = await new SignJWT({ uid: userId, sv: sessionVersion })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${SESSION_DAYS}d`)
@@ -43,14 +43,17 @@ export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!token) return null;
   let uid: number;
+  let sv: number;
   try {
     const { payload } = await jwtVerify(token, secret());
     uid = Number(payload.uid);
+    sv = Number(payload.sv ?? 0);
   } catch {
     return null;
   }
   const [user] = await db.select().from(users).where(eq(users.id, uid)).limit(1);
-  if (!user || !user.isActive) return null;
+  // A session from before "sign out everywhere" / a password change no longer counts.
+  if (!user || !user.isActive || user.sessionVersion !== sv) return null;
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { passwordHash, ...rest } = user;
   return rest;

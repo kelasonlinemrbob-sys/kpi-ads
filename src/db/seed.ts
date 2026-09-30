@@ -11,10 +11,13 @@ import {
   kpiEntries,
   kpiMetrics,
   kpiTargets,
+  performanceAppraisals,
   tasks,
   users,
+  type AdvertiserLevel,
   type Role,
 } from "./schema";
+import { computeAppraisal, SKILL_ASPECTS } from "../lib/appraisal";
 
 type MetricSeed = typeof kpiMetrics.$inferInsert;
 
@@ -36,18 +39,33 @@ const METRICS: MetricSeed[] = [
   { key: "backlinks", name: "Backlinks Built", role: "seo", unit: "number", aggregation: "sum", weight: 20, defaultTarget: 60, sortOrder: 2, description: "Quality backlinks acquired." },
   { key: "top10_keywords", name: "Keywords in Top 10", role: "seo", unit: "number", aggregation: "last", weight: 30, defaultTarget: 120, sortOrder: 3, description: "Tracked keywords currently ranking on Google page 1." },
   { key: "organic_sessions", name: "Organic Sessions", role: "seo", unit: "number", aggregation: "sum", weight: 25, defaultTarget: 45_000, sortOrder: 4, description: "Sessions from organic search (GA4)." },
+  // Creative
+  { key: "content_produced", name: "Konten Diproduksi", role: "creative", unit: "number", aggregation: "sum", weight: 40, defaultTarget: 60, sortOrder: 1, description: "Video / grafis iklan yang selesai dan diserahkan ke advertiser." },
+  { key: "content_live", name: "Konten Tayang", role: "creative", unit: "number", aggregation: "sum", weight: 25, defaultTarget: 40, sortOrder: 2, description: "Konten yang dipakai di iklan aktif (lihat menu Creative)." },
+  { key: "content_winning", name: "Konten Winning", role: "creative", unit: "number", aggregation: "sum", weight: 35, defaultTarget: 6, sortOrder: 3, description: "Konten yang ditandai Winning oleh advertiser / supervisor." },
 ];
 
-const PEOPLE: { name: string; email: string; role: Role; title: string; factor: number }[] = [
+const PEOPLE: {
+  name: string;
+  email: string;
+  role: Role;
+  advertiserLevel?: AdvertiserLevel;
+  secondaryRole?: Role;
+  secondaryShare?: number;
+  title: string;
+  factor: number;
+}[] = [
   { name: "Achmad Hakim", email: "supervisor@kpi.local", role: "supervisor", title: "Performance Marketing Lead", factor: 1 },
-  { name: "Rizky Pratama", email: "rizky@kpi.local", role: "advertiser", title: "Meta Ads Specialist", factor: 1.12 },
-  { name: "Dewi Lestari", email: "dewi@kpi.local", role: "advertiser", title: "Google Ads Specialist", factor: 0.96 },
+  { name: "Rizky Pratama", email: "rizky@kpi.local", role: "advertiser", advertiserLevel: "senior", title: "Meta Ads Specialist", factor: 1.12 },
+  { name: "Dewi Lestari", email: "dewi@kpi.local", role: "advertiser", advertiserLevel: "senior", title: "Google Ads Specialist", factor: 0.96 },
   { name: "Bima Saputra", email: "bima@kpi.local", role: "advertiser", title: "TikTok Ads Specialist", factor: 0.74 },
-  { name: "Salsa Nabila", email: "salsa@kpi.local", role: "advertiser", title: "Marketplace Ads Specialist", factor: 0.88 },
+  { name: "Salsa Nabila", email: "salsa@kpi.local", role: "advertiser", secondaryRole: "seo", secondaryShare: 40, title: "Marketplace Ads & SEO", factor: 0.88 },
   { name: "Fajar Nugroho", email: "fajar@kpi.local", role: "webmaster", title: "Web Master", factor: 1.05 },
   { name: "Intan Permata", email: "intan@kpi.local", role: "webmaster", title: "Web Developer", factor: 0.82 },
   { name: "Nadia Putri", email: "nadia@kpi.local", role: "seo", title: "SEO Specialist", factor: 1.08 },
   { name: "Yoga Firmansyah", email: "yoga@kpi.local", role: "seo", title: "SEO Content Specialist", factor: 0.66 },
+  { name: "Arga Wicaksono", email: "arga@kpi.local", role: "creative", title: "Video Editor", factor: 1.02 },
+  { name: "Putri Maharani", email: "putri@kpi.local", role: "creative", title: "Graphic Designer", factor: 0.9 },
 ];
 
 // deterministic PRNG so every seed looks the same
@@ -73,6 +91,13 @@ const SUMMARIES: Record<Exclude<Role, "supervisor">, string[]> = {
     "Compressed hero images, mobile PageSpeed up by 6 points.",
     "Set up server-side tracking for Google Ads conversions.",
     "Updated WhatsApp CTA routing across all landing pages.",
+  ],
+  creative: [
+    "Selesai 3 video UGC untuk Serum Brightening, 2 hook berbeda.",
+    "Revisi grafis promo gajian sesuai feedback advertiser.",
+    "Editing 2 video testimoni, render versi 9:16 dan 1:1.",
+    "Desain 4 carousel katalog Skincare Bundle.",
+    "Brainstorm angle baru bersama advertiser, siapkan 5 script.",
   ],
   seo: [
     "Published 2 pillar articles and interlinked 8 older posts.",
@@ -107,6 +132,12 @@ function dailyValues(role: Role, f: number): Record<string, number> {
         top10_keywords: 0, // filled in with a rising trend below
         organic_sessions: Math.round(around(1_750 * k, 0.2)),
       };
+    case "creative":
+      return {
+        content_produced: Math.round(around(2.4 * k, 0.5)),
+        content_live: Math.round(around(1.6 * k, 0.5)),
+        content_winning: rand() < 0.22 * k ? 1 : 0,
+      };
     default:
       return {};
   }
@@ -124,7 +155,13 @@ async function main() {
   const passwordHash = await bcrypt.hash("password123", 10);
   const userRows = await db
     .insert(users)
-    .values(PEOPLE.map(({ factor: _f, ...p }) => ({ ...p, passwordHash })))
+    .values(
+      PEOPLE.map(({ factor: _f, ...p }) => ({
+        ...p,
+        advertiserLevel: p.role === "advertiser" ? (p.advertiserLevel ?? "junior") : null,
+        passwordHash,
+      })),
+    )
     .returning();
   const supervisor = userRows.find((u) => u.role === "supervisor")!;
   const factorOf = new Map(PEOPLE.map((p) => [p.email, p.factor]));
@@ -159,10 +196,22 @@ async function main() {
       if (date === today && notReportedToday.has(u.email)) continue;
       if (date !== today && rand() < 0.06 + (1 - f) * 0.12) continue; // occasionally missed
 
-      const values = dailyValues(role, f);
+      let values = dailyValues(role, f);
       if (role === "seo") {
         keywords += Math.round((rand() - 0.35) * 3 * f);
         values.top10_keywords = keywords;
+      }
+      // Dual-role member: each role's totals shrink with its share, and the second role's KPIs join the report.
+      if (u.secondaryRole) {
+        const second = u.secondaryShare / 100;
+        const scale = (v: Record<string, number>, by: number, keep: string[] = []) =>
+          Object.fromEntries(Object.entries(v).map(([k, x]) => [k, keep.includes(k) ? x : Math.round(x * by)]));
+        const extra = dailyValues(u.secondaryRole, f);
+        if (u.secondaryRole === "seo") {
+          keywords += Math.round((rand() - 0.35) * 3 * f);
+          extra.top10_keywords = keywords;
+        }
+        values = { ...scale(values, 1 - second, ["ad_spend"]), ...scale(extra, second, ["top10_keywords", "page_speed", "uptime"]) };
       }
       const ageDays = Math.round((now.getTime() - d.getTime()) / 86_400_000);
       const status = ageDays <= 1 ? "submitted" : rand() < 0.05 ? "revision" : ageDays <= 3 && rand() < 0.5 ? "submitted" : "approved";
@@ -242,16 +291,20 @@ async function main() {
   const due = (n: number) => iso(new Date(now.getFullYear(), now.getMonth(), now.getDate() + n));
   const id = (email: string) => userRows.find((u) => u.email === email)!.id;
   await db.insert(tasks).values([
-    { title: "Build landing page for Promo Gajian", assigneeId: id("fajar@kpi.local"), createdById: id("rizky@kpi.local"), campaignId: campaignRows[0]!.id, priority: "high", status: "in_progress", dueDate: due(1) },
-    { title: "Fix pixel purchase event on checkout", assigneeId: id("intan@kpi.local"), createdById: supervisor.id, priority: "urgent", status: "todo", dueDate: due(0) },
-    { title: "Improve mobile PageSpeed for /serum", assigneeId: id("fajar@kpi.local"), createdById: supervisor.id, priority: "medium", status: "review", dueDate: due(3) },
-    { title: "Prepare 6 new UGC creatives", assigneeId: id("bima@kpi.local"), createdById: supervisor.id, campaignId: campaignRows[4]!.id, priority: "high", status: "todo", dueDate: due(2) },
-    { title: "Weekly budget reallocation report", assigneeId: id("dewi@kpi.local"), createdById: supervisor.id, priority: "medium", status: "in_progress", dueDate: due(1) },
-    { title: "Write pillar article: skincare routine", assigneeId: id("nadia@kpi.local"), createdById: supervisor.id, priority: "medium", status: "done", dueDate: due(-2), completedAt: new Date(now.getTime() - 2 * 86_400_000) },
-    { title: "Backlink outreach — beauty blogs", assigneeId: id("yoga@kpi.local"), createdById: supervisor.id, priority: "high", status: "todo", dueDate: due(-1) },
-    { title: "Set up Shopee ads keyword negatives", assigneeId: id("salsa@kpi.local"), createdById: supervisor.id, campaignId: campaignRows[6]!.id, priority: "low", status: "done", dueDate: due(-3), completedAt: new Date(now.getTime() - 3 * 86_400_000) },
-    { title: "Audit tracking parameters (UTM) all campaigns", assigneeId: id("rizky@kpi.local"), createdById: supervisor.id, priority: "medium", status: "todo", dueDate: due(4) },
-    { title: "Content brief: 10 articles for next month", assigneeId: id("nadia@kpi.local"), createdById: supervisor.id, priority: "low", status: "in_progress", dueDate: due(6) },
+    { title: "Build landing page for Promo Gajian", category: "landing_page", assigneeId: id("fajar@kpi.local"), createdById: id("rizky@kpi.local"), campaignId: campaignRows[0]!.id, priority: "high", status: "in_progress", dueDate: due(1) },
+    { title: "Fix pixel purchase event on checkout", category: "tracking", assigneeId: id("intan@kpi.local"), createdById: supervisor.id, priority: "urgent", status: "todo", dueDate: due(0) },
+    { title: "Improve mobile PageSpeed for /serum", category: "site_performance", assigneeId: id("fajar@kpi.local"), createdById: supervisor.id, priority: "medium", status: "review", dueDate: due(3) },
+    { title: "Prepare 6 new UGC creatives", category: "creative_brief", assigneeId: id("bima@kpi.local"), createdById: supervisor.id, campaignId: campaignRows[4]!.id, priority: "high", status: "todo", dueDate: due(2) },
+    { title: "Weekly budget reallocation report", category: "ads_report", assigneeId: id("dewi@kpi.local"), createdById: supervisor.id, priority: "medium", status: "in_progress", dueDate: due(1) },
+    { title: "Write pillar article: skincare routine", category: "article", assigneeId: id("nadia@kpi.local"), createdById: supervisor.id, priority: "medium", status: "done", dueDate: due(-2), completedAt: new Date(now.getTime() - 2 * 86_400_000) },
+    { title: "Backlink outreach — beauty blogs", category: "backlink", assigneeId: id("yoga@kpi.local"), createdById: supervisor.id, priority: "high", status: "todo", dueDate: due(-1) },
+    { title: "Set up Shopee ads keyword negatives", category: "campaign_optimization", assigneeId: id("salsa@kpi.local"), createdById: supervisor.id, campaignId: campaignRows[6]!.id, priority: "low", status: "done", dueDate: due(-3), completedAt: new Date(now.getTime() - 3 * 86_400_000) },
+    { title: "Audit tracking parameters (UTM) all campaigns", category: "ads_report", assigneeId: id("rizky@kpi.local"), createdById: supervisor.id, priority: "medium", status: "todo", dueDate: due(4) },
+    // Senior → junior (mentoring) waiting for the senior's approval, and a junior's request to the web master.
+    { title: "Rapikan struktur campaign TikTok sesuai feedback", category: "campaign_optimization", description: "- [x] Pisah ad group per angle\n- [x] Matikan audiens CPA > 2x target\n- [ ] Tambah 3 creative baru", assigneeId: id("bima@kpi.local"), createdById: id("rizky@kpi.local"), priority: "high", status: "review", dueDate: due(1) },
+    { title: "Sesi review mingguan campaign Bima & Salsa", category: "mentoring", assigneeId: id("rizky@kpi.local"), createdById: id("rizky@kpi.local"), priority: "medium", status: "todo", dueDate: due(2) },
+    { title: "Landing page Shopee Flash Sale", category: "landing_page", assigneeId: id("intan@kpi.local"), createdById: id("salsa@kpi.local"), priority: "medium", status: "todo", dueDate: due(5) },
+    { title: "Content brief: 10 articles for next month", category: "keyword_research", assigneeId: id("nadia@kpi.local"), createdById: supervisor.id, priority: "low", status: "in_progress", dueDate: due(6) },
   ]);
 
   const minutesAgo = (m: number) => new Date(now.getTime() - m * 60_000);
@@ -262,6 +315,39 @@ async function main() {
     { actorId: supervisor.id, subjectUserId: rizky.id, type: "target_updated", title: "KPI Target Updated", description: "Leads target for Rizky Pratama set to 1,000", href: "/targets", createdAt: minutesAgo(26 * 60) },
   );
   await db.insert(activities).values(activityRows);
+
+  // A finished appraisal for a senior advertiser, scored like the sample HRGA form.
+  const sampleScores = [
+    [5, 4, 4, 3, 3],
+    [4, 3, 3, 3, 3],
+    [4, 3, 3, 3, 4],
+    [4, 4, 4, 4, 4],
+    [2, 2, 3, 3, 3],
+    [3, 3, 4, 4, 3],
+  ];
+  const skillScores = Object.fromEntries(SKILL_ASPECTS.flatMap((a, ai) => a.indicators.map((ind, ii) => [ind.id, sampleScores[ai]![ii]!])));
+  const kpi = {
+    leads: { target: 1_000, real: 930, score: null },
+    cpl: { target: 25_000, real: 27_500, score: null },
+    quality: { target: 60, real: 51, score: null },
+    budget: { target: null, real: null, score: 85 },
+  };
+  const result = computeAppraisal(skillScores, kpi);
+  const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  await db.insert(performanceAppraisals).values({
+    userId: rizky.id,
+    reviewerId: supervisor.id,
+    periodStart: iso(lastMonth),
+    periodEnd: iso(new Date(now.getFullYear(), now.getMonth(), 0)),
+    status: "final",
+    skillScores,
+    skillNote: "Kuat di problem solving. Perlu lebih aktif membimbing advertiser junior.",
+    kpi,
+    kpiNote: "CPL sedikit di atas target; fokus perbaikan kualitas lead bersama tim sales.",
+    skillScore: result.skillTotal,
+    kpiScore: result.kpiTotal,
+    finalizedAt: now,
+  });
 
   const [{ n }] = (await db.execute(sql`select count(*)::int as n from daily_reports`)).rows as { n: number }[];
   console.log(`Done: ${userRows.length} users, ${n} reports.`);

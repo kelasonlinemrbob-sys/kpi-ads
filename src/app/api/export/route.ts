@@ -1,7 +1,7 @@
 import { getCurrentUser } from "@/lib/auth";
 import { getMembers, getScorecards } from "@/lib/data";
 import { currentPeriod, isPeriod, STATUS_META } from "@/lib/kpi";
-import { ROLE_LABEL } from "@/lib/roles";
+import { ROLE_LABEL, rolesLabel } from "@/lib/roles";
 
 const csv = (v: unknown) => {
   const s = v === null || v === undefined ? "" : String(v);
@@ -18,20 +18,33 @@ export async function GET(req: Request) {
   const members =
     user.role === "supervisor"
       ? await getMembers()
-      : [{ id: user.id, name: user.name, email: user.email, role: user.role, title: user.title }];
+      : [
+          {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            title: user.title,
+            secondaryRole: user.secondaryRole,
+            secondaryShare: user.secondaryShare,
+          },
+        ];
   const cards = await getScorecards(period, members);
 
-  const lines = [["Period", "Member", "Email", "Role", "KPI Score", "Status", "Reports", "KPI", "Actual", "Target", "Expected to date", "Achievement %", "Weight"]];
+  const lines = [["Period", "Member", "Email", "Role", "KPI Score", "Status", "Reports", "KPI Role", "Role Share %", "Role Score", "KPI", "Actual", "Target", "Expected to date", "Achievement %", "Weight"]];
   for (const c of cards) {
-    for (const r of c.results) {
+    for (const part of c.roleScores) for (const r of part.results) {
       lines.push([
         period,
         c.member.name,
         c.member.email,
-        ROLE_LABEL[c.member.role],
+        rolesLabel(c.member),
         c.score === null ? "" : c.score.toFixed(1),
         STATUS_META[c.status].label,
         String(c.reportsCount),
+        ROLE_LABEL[part.role],
+        String(part.share),
+        part.score === null ? "" : part.score.toFixed(1),
         r.metric.name,
         r.actual === null ? "" : String(+r.actual.toFixed(2)),
         r.target === null ? "" : String(r.target),

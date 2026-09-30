@@ -33,8 +33,11 @@ import {
   workingDays,
   type Entry,
 } from "@/lib/kpi";
-import { advertiserReportDeadlinePassed, isAdvertiserReportDay } from "@/lib/reporting";
+import { advertiserReportDeadlinePassed, formatCutoff, isAdvertiserReportDay } from "@/lib/reporting";
+import { getReportRules } from "@/lib/report-rules";
 import { resolvePeriod } from "@/lib/period";
+import { hasSecondRole, memberRoles, reportsMondayToFriday, roleSlots } from "@/lib/member-roles";
+import { ROLE_LABEL } from "@/lib/roles";
 import { formatDate, formatNumber, formatValue } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -66,6 +69,10 @@ const HEADLINE: Record<Exclude<Role, "supervisor">, { key: string; icon: LucideI
   seo: [
     { key: "articles", icon: FileTextIcon },
     { key: "top10_keywords", icon: KeyRoundIcon },
+  ],
+  creative: [
+    { key: "content_produced", icon: FileTextIcon },
+    { key: "content_winning", icon: RocketIcon },
   ],
 };
 
@@ -156,19 +163,21 @@ async function SupervisorDashboard({ user, period }: { user: SessionUser; period
   const roas = metricTrend(byKey.get("roas")!, metrics, entries, prevEntries, dates);
   const reportedToday = new Set(todayReports.map((r) => r.userId));
   const advertiserDueToday = isAdvertiserReportDay(todayISO());
-  const deadlinePassed = advertiserReportDeadlinePassed();
+  const rules = await getReportRules();
+  const deadlinePassed = advertiserReportDeadlinePassed(new Date(), rules.cutoff);
 
   const rows: TeamRow[] = scorecards.map((s) => ({
     id: s.member.id,
     name: s.member.name,
     email: s.member.email,
     role: s.member.role,
+    secondaryRole: s.member.secondaryRole ?? null,
     title: s.member.title,
     score: s.score,
     delta: pctDelta(s.score, s.prevScore),
     status: s.status,
     reportsCount: s.reportsCount,
-    expectedReports: workingDays(start, asOf, s.member.role === "advertiser"),
+    expectedReports: workingDays(start, asOf, reportsMondayToFriday(s.member)),
     lastReportDate: s.lastReportDate,
     reportedToday: reportedToday.has(s.member.id),
     reportDueToday: s.member.role === "advertiser" && advertiserDueToday,
@@ -209,7 +218,7 @@ async function SupervisorDashboard({ user, period }: { user: SessionUser; period
       </div>
       <ActivityFeed items={toFeed(feed)} className="xl:h-0 xl:min-h-full" />
       <div className="min-w-0 xl:col-span-2">
-        <TeamTable rows={rows} period={period} />
+        <TeamTable rows={rows} period={period} cutoff={formatCutoff(rules.cutoff)} />
       </div>
     </div>
   );
@@ -221,7 +230,15 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
   const { start } = periodRange(period);
   const prev = comparableRange(period, asOf);
   const dates = datesBetween(start, asOf);
-  const me = { id: user.id, name: user.name, email: user.email, role: user.role, title: user.title };
+  const me = {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    title: user.title,
+    secondaryRole: user.secondaryRole,
+    secondaryShare: user.secondaryShare,
+  };
   const [metrics, [card], entries, prevEntries, scoreSeries, feed, [todayReport], myTasks] = await Promise.all([
     getMetrics(),
     getScorecards(period, [me]),
@@ -241,7 +258,9 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
       .orderBy(asc(tasks.dueDate))
       .limit(5),
   ]);
-  const roleMetrics = metrics.filter((m) => m.role === role);
+  // Every role the member holds (a dual-role member sees both sets of KPIs).
+  const roles = memberRoles(user);
+  const roleMetrics = metrics.filter((m) => roles.includes(m.role));
   const byKey = new Map(metrics.map((m) => [m.key, m]));
   const headline = HEADLINE[role].map(({ key, icon }) => ({
     icon,
@@ -249,8 +268,10 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
     trend: metricTrend(byKey.get(key)!, metrics, entries, prevEntries, dates),
   }));
   const isCurrent = period === todayISO().slice(0, 7);
-  const reportRequiredToday = role !== "advertiser" || isAdvertiserReportDay(todayISO());
-  const reportOverdue = role === "advertiser" && reportRequiredToday && advertiserReportDeadlinePassed();
+  const reportRequiredToday = !reportsMondayToFriday(user) || isAdvertiserReportDay(todayISO());
+  const rules = await getReportRules();
+  const cut = formatCutoff(rules.cutoff);
+  const reportOverdue = role === "advertiser" && reportRequiredToday && advertiserReportDeadlinePassed(new Date(), rules.cutoff);
 
   return (
     <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)]">
@@ -262,8 +283,8 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
               <p className="text-sm text-muted-foreground">
                 {role === "advertiser"
                   ? reportOverdue
-                    ? "Deadline 15.30 WIB sudah lewat. Kirim hasil kemarin penuh dan hari ini sampai 15.30 sekarang."
-                    : "Wajib dikirim Senin–Jumat pukul 15.30 WIB: hasil kemarin penuh dan hari ini sampai 15.30."
+                    ? `Deadline ${cut} WIB sudah lewat. Kirim hasil kemarin penuh dan hari ini sampai ${cut} sekarang.`
+                    : `Wajib dikirim Senin–Jumat pukul ${cut} WIB: hasil kemarin penuh dan hari ini sampai ${cut}.`
                   : "Submit your daily numbers so your KPI score stays up to date."}
               </p>
             </div>
@@ -276,7 +297,7 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
         )}
         <div className="grid gap-3 md:grid-cols-3">
           <StatCard
-            title="My KPI Score"
+            title={hasSecondRole(user) ? `My KPI Score (${roleSlots(user).map((r) => `${r.share}%`).join(" + ")})` : "My KPI Score"}
             icon={GaugeIcon}
             value={card?.score == null ? "–" : formatNumber(card.score, 1)}
             delta={pctDelta(card?.score ?? null, card?.prevScore ?? null)}
@@ -296,7 +317,10 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
         </div>
         <TrendChart
           title="My Daily Performance"
-          series={roleMetrics.map((m) => metricTrend(m, metrics, entries, prevEntries, dates))}
+          series={roleMetrics.map((m) => ({
+            ...metricTrend(m, metrics, entries, prevEntries, dates),
+            ...(roles.length > 1 ? { label: `${m.name} · ${ROLE_LABEL[m.role]}` } : {}),
+          }))}
           defaultKey={HEADLINE[role][0]!.key}
         />
       </div>

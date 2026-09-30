@@ -19,6 +19,9 @@ const upsert = (userId: number, patch: Partial<typeof waSessions.$inferInsert>) 
     .values({ userId, ...patch })
     .onConflictDoUpdate({ target: waSessions.userId, set: { ...patch, updatedAt: new Date() } });
 
+const latestReportId = (userId: number) =>
+  db.select({ id: dailyReports.id }).from(dailyReports).where(eq(dailyReports.userId, userId)).orderBy(desc(dailyReports.date)).limit(1);
+
 export type WhatsAppStatus = {
   workerAlive: boolean;
   status: "disconnected" | "connecting" | "qr" | "connected";
@@ -31,12 +34,14 @@ export type WhatsAppStatus = {
   autoSend: boolean;
   lastError: string | null;
   lastMessage: { status: "pending" | "sent" | "failed"; createdAt: string; error: string | null } | null;
+  /** The latest report as it will look in the group. */
+  preview: string | null;
 };
 
 /** Current WhatsApp link state for the signed-in advertiser (polled by the settings card). */
 export async function getWhatsAppStatus(): Promise<WhatsAppStatus> {
   const user = await requireAdvertiser();
-  const [[session], workerAlive, [lastMessage]] = await Promise.all([
+  const [[session], workerAlive, [lastMessage], [latest]] = await Promise.all([
     db.select().from(waSessions).where(eq(waSessions.userId, user.id)),
     isWorkerAlive(),
     db
@@ -45,6 +50,7 @@ export async function getWhatsAppStatus(): Promise<WhatsAppStatus> {
       .where(eq(waOutbox.userId, user.id))
       .orderBy(desc(waOutbox.createdAt))
       .limit(1),
+    latestReportId(user.id),
   ]);
   return {
     workerAlive,
@@ -58,6 +64,7 @@ export async function getWhatsAppStatus(): Promise<WhatsAppStatus> {
     autoSend: session?.autoSend ?? true,
     lastError: session?.lastError ?? null,
     lastMessage: lastMessage ? { ...lastMessage, createdAt: lastMessage.createdAt.toISOString() } : null,
+    preview: latest ? await buildReportMessage(latest.id, false) : null,
   };
 }
 
@@ -97,12 +104,13 @@ export async function sendWhatsAppTest() {
   const [session] = await db.select().from(waSessions).where(eq(waSessions.userId, user.id));
   if (!session?.groupJid) return { error: "Pilih grup tujuan terlebih dahulu." };
   if (session.status !== "connected") return { error: "WhatsApp belum terhubung." };
-  const [latest] = await db
-    .select({ id: dailyReports.id })
-    .from(dailyReports)
-    .where(and(eq(dailyReports.userId, user.id)))
-    .orderBy(desc(dailyReports.date))
+  const [queued] = await db
+    .select({ id: waOutbox.id })
+    .from(waOutbox)
+    .where(and(eq(waOutbox.userId, user.id), eq(waOutbox.status, "pending")))
     .limit(1);
+  if (queued) return { error: "Masih ada pesan yang menunggu dikirim. Tunggu sebentar agar nomor aman dari spam." };
+  const [latest] = await latestReportId(user.id);
   const body = (latest && (await buildReportMessage(latest.id, false))) ?? "✅ Tes koneksi KPI Ads berhasil.";
   await db.insert(waOutbox).values({ userId: user.id, reportId: latest?.id ?? null, groupJid: session.groupJid, body });
   return { ok: true };

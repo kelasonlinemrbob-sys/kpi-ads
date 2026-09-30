@@ -3,7 +3,8 @@ import Link from "next/link";
 import { CrownIcon, MedalIcon, TrophyIcon } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { getMembers, getScorecards } from "@/lib/data";
-import { pctDelta, periodAsOf, periodRange, STATUS_META, workingDays } from "@/lib/kpi";
+import { pctDelta, periodAsOf, periodRange, STATUS_META, statusOf, workingDays } from "@/lib/kpi";
+import { hasRole, reportsMondayToFriday } from "@/lib/member-roles";
 import { resolvePeriod } from "@/lib/period";
 import { MEMBER_ROLES, ROLE_BADGE, ROLE_LABEL } from "@/lib/roles";
 import { cn, formatDelta, formatNumber } from "@/lib/utils";
@@ -21,8 +22,15 @@ export default async function LeaderboardPage({ searchParams }: { searchParams: 
   const sp = await searchParams;
   const { period, options } = resolvePeriod(sp.period);
   const role = MEMBER_ROLES.find((r) => r === sp.role) ?? null;
-  const members = (await getMembers()).filter((m) => !role || m.role === role);
-  const cards = (await getScorecards(period, members)).sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+  // A role tab ranks everyone holding that role (dual-role members too) by their score in that role only;
+  // "All roles" uses each member's total score.
+  const members = (await getMembers()).filter((m) => !role || hasRole(m, role));
+  const cards = (await getScorecards(period, members))
+    .map((c) => {
+      const part = role ? c.roleScores.find((r) => r.role === role) : null;
+      return part ? { ...c, score: part.score, prevScore: part.prevScore, status: statusOf(part.score) } : c;
+    })
+    .sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
   const reportStart = periodRange(period).start;
   const reportEnd = periodAsOf(period);
   const podium = cards.slice(0, 3);
@@ -65,7 +73,10 @@ export default async function LeaderboardPage({ searchParams }: { searchParams: 
                       {c.member.name}
                       {c.member.id === user.id && <span className="ml-1 text-xs font-normal text-muted-foreground">(you)</span>}
                     </p>
-                    <p className="text-sm text-muted-foreground">{ROLE_LABEL[c.member.role]}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {ROLE_LABEL[c.member.role]}
+                      {c.member.secondaryRole ? ` + ${ROLE_LABEL[c.member.secondaryRole]}` : ""}
+                    </p>
                     <p className="mt-3 text-3xl font-medium tracking-tight tabular-nums">{c.score === null ? "–" : formatNumber(c.score, 1)}</p>
                     <KpiStatusLabel status={c.status} className="mt-1 text-muted-foreground" />
                   </div>
@@ -105,6 +116,7 @@ export default async function LeaderboardPage({ searchParams }: { searchParams: 
                       <TableCell>
                         <Badge variant="outline" className={ROLE_BADGE[c.member.role]}>
                           {ROLE_LABEL[c.member.role]}
+                          {c.member.secondaryRole ? ` + ${ROLE_LABEL[c.member.secondaryRole]}` : ""}
                         </Badge>
                       </TableCell>
                       <TableCell>
@@ -120,7 +132,7 @@ export default async function LeaderboardPage({ searchParams }: { searchParams: 
                       </TableCell>
                       <TableCell className="tabular-nums">
                         {c.reportsCount}
-                        <span className="text-muted-foreground">/{workingDays(reportStart, reportEnd, c.member.role === "advertiser")}</span>
+                        <span className="text-muted-foreground">/{workingDays(reportStart, reportEnd, reportsMondayToFriday(c.member))}</span>
                       </TableCell>
                       <TableCell>
                         <KpiStatusLabel status={c.status} />

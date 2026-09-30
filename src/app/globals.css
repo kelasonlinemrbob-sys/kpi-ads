@@ -33,6 +33,8 @@
   --bar-2: oklch(0.905 0 0);
   --bar-active: oklch(0.36 0.03 260);
   --bar-active-2: oklch(0.22 0.025 260);
+  /* days that reached the daily target (scorecard trend) */
+  --bar-hit: oklch(0.7 0 0);
 }
 
 .dark {
@@ -64,6 +66,7 @@
   --bar-2: oklch(0.27 0.006 270);
   --bar-active: oklch(0.96 0.004 270);
   --bar-active-2: oklch(0.78 0.01 270);
+  --bar-hit: oklch(0.52 0 0);
 }
 
 @theme inline {

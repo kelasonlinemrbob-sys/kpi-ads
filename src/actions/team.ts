@@ -1,15 +1,16 @@
 "use server";
 
 import bcrypt from "bcryptjs";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
-import { kpiMetrics, kpiTargets, roleEnum, users } from "@/db/schema";
-import { requireUser } from "@/lib/auth";
+import { advertiserLevelEnum, kpiMetrics, kpiTargets, roleEnum, users } from "@/db/schema";
+import { createSession, requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
 import { isPeriod } from "@/lib/kpi";
-import { ROLE_LABEL } from "@/lib/roles";
+import { DEFAULT_SECONDARY_SHARE } from "@/lib/member-roles";
+import { ROLE_LABEL, roleLabel } from "@/lib/roles";
 import type { FormState } from "./auth";
 
 async function requireSupervisor() {
@@ -23,6 +24,9 @@ const memberSchema = z.object({
   name: z.string().trim().min(2, "Name is too short").max(120),
   email: z.email("Enter a valid email").transform((s) => s.toLowerCase().trim()),
   role: z.enum(roleEnum.enumValues),
+  advertiserLevel: z.enum(advertiserLevelEnum.enumValues).optional(),
+  secondaryRole: z.enum(roleEnum.enumValues).optional().or(z.literal("none").transform(() => undefined)),
+  secondaryShare: z.coerce.number().int().min(10, "Porsi role kedua minimal 10%.").max(90, "Porsi role kedua maksimal 90%.").optional(),
   title: z.string().trim().max(120).optional(),
   password: z.string().min(8, "Password must be at least 8 characters").optional().or(z.literal("").transform(() => undefined)),
   isActive: z.enum(["on"]).optional(),
@@ -33,7 +37,20 @@ export async function saveMember(_: FormState, formData: FormData): Promise<Form
   const raw = Object.fromEntries([...formData.entries()].filter(([k, v]) => !(k === "id" && v === "")));
   const parsed = memberSchema.safeParse(raw);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };
-  const { id, password, isActive, ...data } = parsed.data;
+  const { id, password, isActive, advertiserLevel, secondaryRole, secondaryShare, ...rest } = parsed.data;
+  if (secondaryRole) {
+    if (rest.role === "supervisor" || secondaryRole === "supervisor") return { error: "Supervisor tidak bisa merangkap role lain." };
+    if (secondaryRole === rest.role) return { error: "Role kedua harus berbeda dari role utama." };
+    // Ads features (campaigns, Generate dari Ads, WhatsApp) follow the main role.
+    if (secondaryRole === "advertiser") return { error: "Jadikan Advertiser sebagai role utama, lalu pilih role kedua." };
+  }
+  // Seniority only means something for advertisers.
+  const data = {
+    ...rest,
+    advertiserLevel: rest.role === "advertiser" ? (advertiserLevel ?? "junior") : null,
+    secondaryRole: secondaryRole ?? null,
+    secondaryShare: secondaryShare ?? DEFAULT_SECONDARY_SHARE,
+  };
 
   const [clash] = await db
     .select({ id: users.id })
@@ -52,9 +69,16 @@ export async function saveMember(_: FormState, formData: FormData): Promise<Form
         ...data,
         title: data.title || null,
         isActive: !!isActive,
+        // A password reset or deactivation ends the member's open sessions.
         ...(password ? { passwordHash: await bcrypt.hash(password, 10) } : {}),
+        ...(password || !isActive ? { sessionVersion: sql`${users.sessionVersion} + 1` } : {}),
       })
       .where(eq(users.id, id));
+    // A supervisor resetting their own password stays signed in on this device.
+    if (id === me.id && password) {
+      const [self] = await db.select({ sessionVersion: users.sessionVersion }).from(users).where(eq(users.id, id));
+      await createSession(id, self!.sessionVersion);
+    }
   } else {
     if (!password) return { error: "Set an initial password for the new member." };
     const [created] = await db
@@ -66,7 +90,7 @@ export async function saveMember(_: FormState, formData: FormData): Promise<Form
       subjectUserId: created!.id,
       type: "user_created",
       title: "New Team Member",
-      description: `${data.name} joined as ${ROLE_LABEL[data.role]}`,
+      description: `${data.name} joined as ${roleLabel(data.role, data.advertiserLevel)}${data.secondaryRole ? ` + ${ROLE_LABEL[data.secondaryRole]}` : ""}`,
       href: "/team",
     });
   }

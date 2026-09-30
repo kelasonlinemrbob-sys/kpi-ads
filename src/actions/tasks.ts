@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { priorityEnum, taskStatusEnum, tasks, users } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
+import { allowedStatuses, canAssign, categoryFits, ownsTask } from "@/lib/task-rules";
 import type { FormState } from "./auth";
 
 const taskSchema = z.object({
@@ -21,6 +22,7 @@ const taskSchema = z.object({
     .optional()
     .or(z.literal("").transform(() => undefined)),
   campaignId: z.coerce.number().int().positive().optional(),
+  category: z.string().max(40).optional(),
 });
 
 export async function saveTask(_: FormState, formData: FormData): Promise<FormState> {
@@ -32,18 +34,31 @@ export async function saveTask(_: FormState, formData: FormData): Promise<FormSt
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };
   const { id, ...data } = parsed.data;
 
-  const [assignee] = await db.select({ id: users.id, name: users.name, isActive: users.isActive }).from(users).where(eq(users.id, data.assigneeId));
+  const [assignee] = await db
+    .select({ id: users.id, name: users.name, role: users.role, advertiserLevel: users.advertiserLevel, secondaryRole: users.secondaryRole, isActive: users.isActive })
+    .from(users)
+    .where(eq(users.id, data.assigneeId));
   if (!assignee?.isActive) return { error: "Assignee not found." };
+  if (data.category && !categoryFits(data.category, assignee)) return { error: "Kategori tugas tidak sesuai dengan role penerima." };
 
   if (id) {
     const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
     if (!task) return { error: "Task not found." };
-    if (user.role !== "supervisor" && task.createdById !== user.id) return { error: "Only the creator or a supervisor can edit this task." };
+    if (!ownsTask(user, task)) return { error: "Only the creator or a supervisor can edit this task." };
+    // Keeping the current assignee is always fine; handing it to someone new follows the role rules.
+    if (task.assigneeId !== assignee.id && !canAssign(user, assignee)) return { error: `Kamu tidak bisa memberi tugas ke ${assignee.name}.` };
     await db
       .update(tasks)
-      .set({ ...data, description: data.description ?? null, dueDate: data.dueDate ?? null, campaignId: data.campaignId ?? null })
+      .set({
+        ...data,
+        description: data.description ?? null,
+        dueDate: data.dueDate ?? null,
+        campaignId: data.campaignId ?? null,
+        category: data.category ?? null,
+      })
       .where(eq(tasks.id, id));
   } else {
+    if (!canAssign(user, assignee)) return { error: `Kamu tidak bisa memberi tugas ke ${assignee.name}.` };
     await db.insert(tasks).values({ ...data, createdById: user.id });
     await logActivity({
       actorId: user.id,
@@ -62,19 +77,29 @@ export async function setTaskStatus(id: number, status: (typeof taskStatusEnum.e
   const user = await requireUser();
   const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
   if (!task) return { error: "Task not found" };
-  if (user.role !== "supervisor" && task.assigneeId !== user.id && task.createdById !== user.id) return { error: "Not allowed" };
+  if (task.status === status) return { ok: true };
+  if (!allowedStatuses(user, task).includes(status)) {
+    return {
+      error:
+        status === "done" && task.assigneeId === user.id
+          ? "Pindahkan ke Review — pemberi tugas atau supervisor yang menyetujui jadi Done."
+          : "Not allowed",
+    };
+  }
   await db
     .update(tasks)
     .set({ status, completedAt: status === "done" ? new Date() : null })
     .where(eq(tasks.id, id));
-  if (status === "done" || status === "review") {
+  const sentBack = task.status === "review" && (status === "in_progress" || status === "todo") && task.assigneeId !== user.id;
+  if (status === "done" || status === "review" || sentBack) {
     await logActivity({
       actorId: user.id,
-      subjectUserId: task.createdById,
+      // Review goes to whoever asked for the task; approval / changes go back to the assignee.
+      subjectUserId: status === "review" ? task.createdById : task.assigneeId,
       type: "task_updated",
-      title: status === "done" ? "Task Completed" : "Task Ready for Review",
+      title: status === "done" ? "Task Completed" : status === "review" ? "Task Ready for Review" : "Task Needs Changes",
       description: task.title,
-      href: "/tasks",
+      href: status === "review" ? "/tasks?scope=review" : "/tasks",
     });
   }
   revalidatePath("/", "layout");
@@ -85,7 +110,7 @@ export async function deleteTask(id: number) {
   const user = await requireUser();
   const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
   if (!task) return { error: "Task not found" };
-  if (user.role !== "supervisor" && task.createdById !== user.id) return { error: "Not allowed" };
+  if (!ownsTask(user, task)) return { error: "Not allowed" };
   await db.delete(tasks).where(eq(tasks.id, id));
   revalidatePath("/", "layout");
   return { ok: true };

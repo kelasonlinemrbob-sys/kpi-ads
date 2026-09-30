@@ -8,7 +8,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const counts = await getNotifications(user);
   return (
     <Suspense>
-      <AppShell user={{ id: user.id, name: user.name, email: user.email, role: user.role }} counts={counts}>
+      <AppShell user={{ id: user.id, name: user.name, email: user.email, role: user.role, advertiserLevel: user.advertiserLevel }} counts={counts}>
         {children}
       </AppShell>
     </Suspense>

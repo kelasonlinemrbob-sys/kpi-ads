@@ -6,6 +6,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { adAccounts, adCampaigns } from "@/db/schema";
 import { fetchAccountCampaignList } from "@/lib/ads-api";
+import { checkMetaAdAccount } from "@/lib/meta-connection";
 import { logActivity } from "@/lib/data";
 import { requireUser } from "@/lib/auth";
 import { can } from "@/lib/roles";
@@ -33,9 +34,20 @@ export async function saveAdAccount(_: FormState, formData: FormData): Promise<F
     .limit(1);
   if (existing) return { error: "Akun iklan ini sudah terdaftar." };
 
+  // Make sure the Meta token can actually read the account, so a wrong ID or a missing
+  // System User assignment shows up now instead of on the first "Generate dari Ads".
+  let message = "Akun iklan ditambahkan";
+  if (parsed.data.platform === "meta") {
+    const check = await checkMetaAdAccount(parsed.data.accountId);
+    if (!check.ok && !check.missingToken && !check.network) return { error: check.error };
+    message = check.ok
+      ? `Akun iklan ditambahkan dan terhubung ke Meta (${check.name})`
+      : `Akun iklan ditambahkan, tapi ${check.missingToken ? "token Meta belum diisi sehingga data belum bisa ditarik" : check.error}`;
+  }
+
   await db.insert(adAccounts).values({ ...parsed.data, createdById: user.id });
   revalidatePath("/campaigns");
-  return { ok: true, message: "Akun iklan ditambahkan" };
+  return { ok: true, message };
 }
 
 export async function deleteAdAccount(id: number) {

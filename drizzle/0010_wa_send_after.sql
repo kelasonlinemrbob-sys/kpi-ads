@@ -1,0 +1,1 @@
+ALTER TABLE "wa_outbox" ADD COLUMN "send_after" timestamp with time zone DEFAULT now() NOT NULL;

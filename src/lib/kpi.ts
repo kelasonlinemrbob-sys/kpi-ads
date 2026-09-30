@@ -121,6 +121,8 @@ export function scoreMember(opts: {
   targets: Map<number, number>; // metricId -> monthly target override
   period: string;
   asOf: string;
+  /** Scales default targets for someone who spends only part of their time on this role (0.6 = 60%). */
+  targetScale?: number;
 }): { score: number | null; results: MetricResult[] } {
   const { start, days } = periodRange(opts.period);
   const elapsed = Math.max(1, Math.round((parseISODate(opts.asOf).getTime() - parseISODate(start).getTime()) / 86_400_000) + 1);
@@ -129,7 +131,9 @@ export function scoreMember(opts: {
 
   const results: MetricResult[] = opts.metrics.map((metric) => {
     const actual = aggregate(metric, opts.entries, byKey);
-    const target = opts.targets.get(metric.id) ?? metric.defaultTarget ?? null;
+    // A per-member override is taken as-is; the default target shrinks with the member's share of the role.
+    const override = opts.targets.get(metric.id);
+    const target = override ?? (metric.defaultTarget === null ? null : scaleTarget(metric, metric.defaultTarget, opts.targetScale ?? 1));
     const expected = target === null ? null : metric.aggregation === "sum" ? target * fraction : target;
     return { metric, actual, target, expected, achievement: achievementOf(metric, actual, expected) };
   });
@@ -142,6 +146,11 @@ export function scoreMember(opts: {
     totalWeight += r.metric.weight;
   }
   return { score: totalWeight ? (weighted / totalWeight) * 100 : null, results };
+}
+
+/** Totals scale with time spent on the role; averages, ratios and rates (e.g. CPL, PageSpeed) don't. */
+export function scaleTarget(metric: KpiMetric, target: number, scale: number) {
+  return metric.aggregation === "sum" && scale !== 1 ? target * scale : target;
 }
 
 export type KpiStatus = "exceeding" | "on_track" | "at_risk" | "off_track" | "no_data";

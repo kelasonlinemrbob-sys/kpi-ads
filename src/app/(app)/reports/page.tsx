@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { and, count, desc, eq, gte, inArray, lte, ne, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, lte, type SQL } from "drizzle-orm";
 import { CalendarIcon, ClipboardPenIcon, MessageCircleIcon, UserIcon } from "lucide-react";
 import { db } from "@/db";
 import { dailyReports, kpiEntries, users, waSessions } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
-import { getMembers, getMetrics } from "@/lib/data";
+import { getMembers, getMetrics, reviewedMemberSql } from "@/lib/data";
+import { hasSecondRole, needsReview } from "@/lib/member-roles";
+import { getReportRules } from "@/lib/report-rules";
+import { ROLE_LABEL } from "@/lib/roles";
 import { periodRange, todayISO } from "@/lib/kpi";
 import { resolveReportRange } from "@/lib/reporting";
 import { resolvePeriod } from "@/lib/period";
@@ -37,7 +40,9 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const memberFilter = isSupervisor ? (sp.user ? Number(sp.user) : null) : user.id;
   const page = Math.max(1, Number(sp.page) || 1);
 
-  if (user.role === "advertiser") {
+  // A dual-role advertiser (e.g. + SEO) can switch to the plain list to follow the review of their other part.
+  const dualAdvertiser = user.role === "advertiser" && hasSecondRole(user);
+  if (user.role === "advertiser" && !(dualAdvertiser && sp.view === "all")) {
     const filter = sp.filter === "todo" ? "todo" : "all";
     const { range, options: rangeOptions } = resolveReportRange(sp.range, todayISO());
     const [wa] = await db.select().from(waSessions).where(eq(waSessions.userId, user.id));
@@ -52,11 +57,11 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
       <>
         <PageHeader
           title="My Reports"
-          description="Laporan iklan harianmu per hari kerja. Lengkapi periode yang belum diisi sebelum lewat 7 hari."
+          description={`Laporan iklan harianmu per hari kerja. Lengkapi periode yang belum diisi sebelum lewat ${(await getReportRules()).backfillDays} hari.`}
           actions={
             <>
               <Button asChild variant="outline" className="h-8">
-                <Link href="/settings#whatsapp" title={waReady ? `Laporan otomatis dikirim ke ${wa?.groupName}` : "Hubungkan WhatsApp"}>
+                <Link href="/settings?tab=integrasi#whatsapp" title={waReady ? `Laporan otomatis dikirim ke ${wa?.groupName}` : "Hubungkan WhatsApp"}>
                   <MessageCircleIcon className={waReady ? "text-success" : "text-muted-foreground"} />
                   {waReady ? "WA aktif" : "Hubungkan WA"}
                 </Link>
@@ -68,6 +73,11 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                 options={rangeOptions.map(({ value, label }) => ({ value, label }))}
                 icon={<CalendarIcon className="size-4 text-foreground/70" />}
               />
+              {dualAdvertiser && (
+                <Button asChild variant="outline" className="h-8">
+                  <Link href="/reports?view=all">Status review {ROLE_LABEL[user.secondaryRole!]}</Link>
+                </Button>
+              )}
               <Button asChild className="h-8">
                 <Link href="/reports/new">
                   <ClipboardPenIcon /> Submit report
@@ -95,7 +105,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     status === "all"
       ? undefined
       : status === "submitted" && isSupervisor
-        ? and(eq(dailyReports.status, status), ne(users.role, "advertiser"))
+        ? and(eq(dailyReports.status, status), reviewedMemberSql)
         : eq(dailyReports.status, status);
   const filtered = statusCondition ? and(base, statusCondition) : base;
 
@@ -103,11 +113,11 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     getMetrics(),
     isSupervisor ? getMembers(true) : Promise.resolve([]),
     db
-      .select({ status: dailyReports.status, role: users.role, n: count() })
+      .select({ status: dailyReports.status, role: users.role, secondaryRole: users.secondaryRole, n: count() })
       .from(dailyReports)
       .innerJoin(users, eq(users.id, dailyReports.userId))
       .where(base)
-      .groupBy(dailyReports.status, users.role),
+      .groupBy(dailyReports.status, users.role, users.secondaryRole),
     db
       .select({ total: count() })
       .from(dailyReports)
@@ -122,6 +132,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         userId: users.id,
         name: users.name,
         role: users.role,
+        secondaryRole: users.secondaryRole,
         createdAt: dailyReports.createdAt,
       })
       .from(dailyReports)
@@ -139,8 +150,10 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         .where(inArray(kpiEntries.reportId, reports.map((r) => r.id)))
     : [];
   const metricById = new Map(metrics.map((m) => [m.id, m]));
-  const rows: ReportRow[] = reports.map((r) => ({
+  const rows: ReportRow[] = reports.map(({ secondaryRole, ...r }) => ({
     ...r,
+    secondaryRole,
+    noReview: !needsReview({ role: r.role, secondaryRole }),
     createdAt: r.createdAt.toISOString(),
     highlights: entries
       .filter((e) => e.reportId === r.id)
@@ -153,7 +166,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
 
   const countOf = (s: string) => {
     const matching = statusCounts.filter(
-      (count) => count.status === s && !(isSupervisor && s === "submitted" && count.role === "advertiser"),
+      (count) => count.status === s && !(isSupervisor && s === "submitted" && !needsReview(count)),
     );
     return s === "all" ? statusCounts.reduce((total, count) => total + count.n, 0) : matching.reduce((total, count) => total + count.n, 0);
   };
@@ -189,6 +202,11 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
               />
             )}
             <PeriodSelect value={period} options={options} />
+            {dualAdvertiser && (
+              <Button asChild variant="outline" className="h-8">
+                <Link href="/reports">Laporan iklan</Link>
+              </Button>
+            )}
             {!isSupervisor && (
               <Button asChild className="h-8">
                 <Link href="/reports/new">

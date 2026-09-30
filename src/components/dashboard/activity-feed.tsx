@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import {
   ActivityIcon,
+  AwardIcon,
   CircleCheckIcon,
   ClipboardCheckIcon,
   ListPlusIcon,
@@ -39,6 +40,7 @@ const TYPE_META: Record<string, { icon: LucideIcon; tone: string }> = {
   campaign_updated: { icon: MegaphoneIcon, tone: "text-warning" },
   target_updated: { icon: TargetIcon, tone: "text-destructive" },
   user_created: { icon: UserPlusIcon, tone: "text-success" },
+  appraisal_final: { icon: AwardIcon, tone: "text-info" },
 };
 
 const TABS = [

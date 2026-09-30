@@ -12,6 +12,8 @@ import {
   EyeIcon,
   MegaphoneIcon,
   PencilIcon,
+  RotateCcwIcon,
+  TagIcon,
   SignalHighIcon,
   SignalLowIcon,
   SignalMediumIcon,
@@ -19,9 +21,10 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import { toast } from "sonner";
-import type { Role, Task } from "@/db/schema";
+import type { Task } from "@/db/schema";
 import { deleteTask, setTaskStatus } from "@/actions/tasks";
 import { PRIORITY_LABEL, TASK_STATUS_LABEL } from "@/lib/labels";
+import { allowedStatuses, categoryLabel, ownsTask, type TaskPerson } from "@/lib/task-rules";
 import { cn, formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -48,6 +51,7 @@ export type TaskCard = {
   creatorName: string;
   campaignId: number | null;
   campaignName: string | null;
+  category: string | null;
 };
 
 const COLUMNS: { status: Task["status"]; icon: typeof CircleIcon; tone: string }[] = [
@@ -73,7 +77,7 @@ export function TaskBoard({
 }: {
   today: string;
   tasks: TaskCard[];
-  currentUser: { id: number; role: Role };
+  currentUser: TaskPerson;
   people: Person[];
   campaigns: { id: number; name: string }[];
 }) {
@@ -93,8 +97,8 @@ export function TaskBoard({
       router.refresh();
     });
 
-  const canEdit = (t: TaskCard) => currentUser.role === "supervisor" || t.createdById === currentUser.id;
-  const canMove = (t: TaskCard) => canEdit(t) || t.assigneeId === currentUser.id;
+  const canEdit = (t: TaskCard) => ownsTask(currentUser, t);
+  const canMove = (t: TaskCard) => allowedStatuses(currentUser, t).length > 0;
 
   return (
     <>
@@ -116,6 +120,10 @@ export function TaskBoard({
                   const p = PRIORITY_META[t.priority];
                   const overdue = t.dueDate && t.status !== "done" && t.dueDate < today;
                   const nextStatus = COLUMNS[COLUMNS.findIndex((c) => c.status === t.status) + 1]?.status;
+                  const delegated = t.assigneeId !== t.createdById;
+                  // Someone else's work waiting for this user's approval.
+                  const approving = t.status === "review" && delegated && canEdit(t);
+                  const waiting = t.status === "review" && !canEdit(t) && t.assigneeId === currentUser.id;
                   return (
                     <article key={t.id} className="rounded-lg border bg-card p-2.5">
                       <div className="flex items-start justify-between gap-2">
@@ -131,7 +139,7 @@ export function TaskBoard({
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Move to</DropdownMenuLabel>
-                              {COLUMNS.filter((c) => c.status !== t.status).map((c) => (
+                              {COLUMNS.filter((c) => c.status !== t.status && allowedStatuses(currentUser, t).includes(c.status)).map((c) => (
                                 <DropdownMenuItem key={c.status} onSelect={() => move(t, c.status)}>
                                   <c.icon className={c.tone} /> {TASK_STATUS_LABEL[c.status]}
                                 </DropdownMenuItem>
@@ -160,7 +168,18 @@ export function TaskBoard({
                           </DropdownMenu>
                         )}
                       </div>
-                      {t.description && <p className="mt-1 line-clamp-2 text-[13px] text-muted-foreground">{t.description}</p>}
+                      {delegated && (
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">
+                          {t.creatorName} → {t.assigneeName}
+                        </p>
+                      )}
+                      {t.description && <p className="mt-1 line-clamp-2 text-[13px] whitespace-pre-line text-muted-foreground">{t.description}</p>}
+                      {t.category && (
+                        <p className="mt-1.5 mr-1 inline-flex max-w-full items-center gap-1.5 rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                          <TagIcon className="size-3 shrink-0" />
+                          <span className="truncate">{categoryLabel(t.category)}</span>
+                        </p>
+                      )}
                       {t.campaignName && (
                         <p className="mt-1.5 inline-flex max-w-full items-center gap-1.5 rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
                           <MegaphoneIcon className="size-3 shrink-0" />
@@ -183,7 +202,26 @@ export function TaskBoard({
                           <UserAvatar name={t.assigneeName} className="size-5 text-[9px]" />
                         </span>
                       </div>
-                      {canMove(t) && nextStatus && (
+                      {approving ? (
+                        <div className="mt-2 grid grid-cols-2 gap-1">
+                          <button
+                            type="button"
+                            onClick={() => move(t, "in_progress")}
+                            className="flex items-center justify-center gap-1.5 rounded-md border py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                          >
+                            <RotateCcwIcon className="size-3" /> Minta revisi
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => move(t, "done")}
+                            className="flex items-center justify-center gap-1.5 rounded-md border border-success/40 bg-success/10 py-1 text-xs font-medium text-success transition-colors hover:bg-success/15"
+                          >
+                            <CircleCheckIcon className="size-3" /> Setujui
+                          </button>
+                        </div>
+                      ) : waiting ? (
+                        <p className="mt-2 rounded-md bg-muted py-1 text-center text-xs text-muted-foreground">Menunggu persetujuan {t.creatorName}</p>
+                      ) : canMove(t) && nextStatus && allowedStatuses(currentUser, t).includes(nextStatus) && (
                         <button
                           type="button"
                           onClick={() => move(t, nextStatus)}
@@ -203,6 +241,7 @@ export function TaskBoard({
       {editing && (
         <TaskDialog
           key={editing.id}
+          currentUser={currentUser}
           task={editing}
           people={people}
           campaigns={campaigns}

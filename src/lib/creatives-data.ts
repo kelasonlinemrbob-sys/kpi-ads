@@ -1,0 +1,324 @@
+import "server-only";
+import { and, desc, eq, isNotNull } from "drizzle-orm";
+import { db } from "@/db";
+import { adAccounts, adCreatives, campaigns, users, type AdCreative, type Role } from "@/db/schema";
+import { matchProduct } from "@/lib/ads-matching";
+import {
+  CREATIVE_FORMAT_LABEL,
+  CREATIVE_LABEL,
+  CREATIVE_STATUS_LABEL,
+  creativeRates,
+  formatPlayTime,
+  objectiveLabel,
+  sumCreatives,
+  type CreativeNumbers,
+} from "@/lib/creatives";
+
+/** One row of the Creative page / export, with the advertiser and product resolved like the reports do. */
+export type CreativeRow = {
+  id: number;
+  accountName: string;
+  adName: string;
+  campaignName: string | null;
+  adType: string;
+  permalink: string | null;
+  thumbnailUrl: string | null;
+  label: AdCreative["label"];
+  status: AdCreative["status"];
+  platformStatus: string | null;
+  /** Format as the team set it, else as Meta reports it. */
+  format: AdCreative["format"];
+  detectedFormat: AdCreative["format"];
+  formatOverridden: boolean;
+  creatorId: number | null;
+  editorId: number | null;
+  impressions: number;
+  reach: number;
+  videoViews: number;
+  avgPlayTime: number | null;
+  thruplays: number;
+  spend: number;
+  clicks: number;
+  leads: number;
+  /** effective_object_story_id; ads sharing it run the same content. */
+  postId: string | null;
+  advertiser: { id: number; name: string } | null;
+  product: string | null;
+  adCreatedAt: string | null;
+  syncedAt: string;
+};
+
+export type CreativeFilters = {
+  advertiser?: number | null;
+  product?: string | null;
+  status?: AdCreative["status"] | null;
+  format?: AdCreative["format"] | null;
+  label?: NonNullable<AdCreative["label"]> | "none" | null;
+  creator?: number | null;
+  q?: string | null;
+  /** Only ads created in the last N days, or "month" for the running month. */
+  created?: "7d" | "30d" | "90d" | "month" | null;
+  sort?: "impressions" | "thruplays" | "newest" | "playtime" | "spend" | "ctr" | "hook" | "cpl";
+};
+
+export async function getCreativeRows(filters: CreativeFilters = {}): Promise<CreativeRow[]> {
+  const [rows, products] = await Promise.all([
+    db
+      .select({ c: adCreatives, accountName: adAccounts.name })
+      .from(adCreatives)
+      .innerJoin(adAccounts, eq(adAccounts.id, adCreatives.adAccountId))
+      .orderBy(desc(adCreatives.impressions)),
+    db
+      .select({
+        adAccountId: campaigns.adAccountId,
+        keyword: campaigns.matchKeyword,
+        product: campaigns.product,
+        name: campaigns.name,
+        ownerId: campaigns.ownerId,
+        ownerName: users.name,
+      })
+      .from(campaigns)
+      .innerJoin(users, eq(users.id, campaigns.ownerId))
+      .where(and(isNotNull(campaigns.adAccountId), isNotNull(campaigns.matchKeyword))),
+  ]);
+  const linked = products.filter((p) => p.keyword?.trim()).map((p) => ({ ...p, keyword: p.keyword! }));
+  const q = filters.q?.trim().toLowerCase();
+
+  const all: CreativeRow[] = rows.map(({ c, accountName }) => {
+    // Same product-code matching as "Generate dari Ads": the code in the campaign name picks the product.
+    const product = c.campaignName ? matchProduct(c.campaignName, linked.filter((p) => p.adAccountId === c.adAccountId)) : null;
+    return {
+      id: c.id,
+      accountName,
+      adName: c.adName,
+      campaignName: c.campaignName,
+      adType: objectiveLabel(c.objective),
+      permalink: c.permalink,
+      thumbnailUrl: c.thumbnailUrl,
+      label: c.label,
+      status: c.status,
+      platformStatus: c.platformStatus,
+      format: c.formatOverride ?? c.format,
+      detectedFormat: c.format,
+      formatOverridden: c.formatOverride !== null,
+      creatorId: c.creatorId,
+      editorId: c.editorId,
+      impressions: c.impressions,
+      reach: c.reach,
+      videoViews: c.videoViews,
+      avgPlayTime: c.avgPlayTime,
+      thruplays: c.thruplays,
+      spend: c.spend,
+      clicks: c.clicks,
+      leads: c.leads,
+      postId: c.postId,
+      advertiser: product ? { id: product.ownerId, name: product.ownerName } : null,
+      product: product ? product.product?.trim() || product.name : null,
+      adCreatedAt: c.adCreatedAt?.toISOString() ?? null,
+      syncedAt: c.syncedAt.toISOString(),
+    };
+  });
+
+  const createdFrom = createdSince(filters.created ?? null);
+  const filtered = all.filter(
+    (r) =>
+      (!createdFrom || (r.adCreatedAt !== null && r.adCreatedAt >= createdFrom)) &&
+      (!filters.advertiser || r.advertiser?.id === filters.advertiser) &&
+      (!filters.product || r.product === filters.product) &&
+      (!filters.status || r.status === filters.status) &&
+      (!filters.format || r.format === filters.format) &&
+      (!filters.label || (filters.label === "none" ? r.label === null : r.label === filters.label)) &&
+      (!filters.creator || r.creatorId === filters.creator || r.editorId === filters.creator) &&
+      (!q || `${r.adName} ${r.campaignName ?? ""} ${r.permalink ?? ""} ${r.product ?? ""}`.toLowerCase().includes(q)),
+  );
+  return sortCreatives(filtered, filters.sort ?? "impressions");
+}
+
+type SortKey = NonNullable<CreativeFilters["sort"]>;
+
+/** Sort value for a row or a post group; rates without data sink to the bottom. */
+export function sortValue(r: CreativeNumbers & { adCreatedAt: string | null }, sort: SortKey): number {
+  const rates = creativeRates(sumCreatives([r]));
+  switch (sort) {
+    case "thruplays":
+      return r.thruplays;
+    case "playtime":
+      return r.avgPlayTime ?? -1;
+    case "newest":
+      return r.adCreatedAt ? Date.parse(r.adCreatedAt) : 0;
+    case "spend":
+      return r.spend;
+    case "ctr":
+      return rates.ctr ?? -1;
+    case "hook":
+      return rates.hook ?? -1;
+    case "cpl":
+      // Cheapest lead first: negate, and push "no leads" to the end.
+      return rates.cpl === null ? -Infinity : -rates.cpl;
+    default:
+      return r.impressions;
+  }
+}
+
+export function sortCreatives<T extends CreativeNumbers & { adCreatedAt: string | null }>(rows: T[], sort: SortKey) {
+  return [...rows].sort((a, b) => sortValue(b, sort) - sortValue(a, sort));
+}
+
+function createdSince(created: CreativeFilters["created"]) {
+  if (!created) return null;
+  const now = new Date();
+  if (created === "month") return new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  const days = { "7d": 7, "30d": 30, "90d": 90 }[created];
+  return new Date(now.getTime() - days * 86_400_000).toISOString();
+}
+
+/** A content (post) with every ad that runs it, numbers summed. */
+export type CreativePost = CreativeNumbers & {
+  key: string;
+  permalink: string | null;
+  thumbnailUrl: string | null;
+  adType: string;
+  product: string | null;
+  advertiser: CreativeRow["advertiser"];
+  /** Best verdict among its ads (Winning beats Good …). */
+  label: CreativeRow["label"];
+  /** Active when any of its ads runs. */
+  status: CreativeRow["status"];
+  creatorId: number | null;
+  editorId: number | null;
+  adCreatedAt: string | null;
+  ads: CreativeRow[];
+};
+
+const LABEL_RANK = { winning: 4, good: 3, average: 2, poor: 1 } as const;
+const STATUS_RANK = { active: 4, review: 3, paused: 2, takedown: 1 } as const;
+
+export function groupByPost(rows: CreativeRow[], sort: SortKey = "impressions"): CreativePost[] {
+  const groups = new Map<string, CreativeRow[]>();
+  for (const r of rows) {
+    const key = r.postId ?? `ad-${r.id}`;
+    groups.set(key, [...(groups.get(key) ?? []), r]);
+  }
+  const posts = [...groups.entries()].map(([key, ads]): CreativePost => {
+    const t = sumCreatives(ads);
+    const first = [...ads].sort((a, b) => b.impressions - a.impressions)[0]!;
+    const pickBest = <K extends "label" | "status">(field: K, rank: Record<string, number>) =>
+      ads.reduce((best, r) => ((r[field] && rank[r[field]!]! > (best ? rank[best as string]! : 0)) ? r[field] : best), null as CreativeRow[K] | null);
+    return {
+      key,
+      format: first.format,
+      impressions: t.impressions,
+      reach: t.reach,
+      videoViews: t.videoViews,
+      thruplays: t.thruplays,
+      avgPlayTime: t.avgPlayTime,
+      spend: t.spend,
+      clicks: t.clicks,
+      leads: t.leads,
+      permalink: first.permalink,
+      thumbnailUrl: ads.find((a) => a.thumbnailUrl)?.thumbnailUrl ?? null,
+      adType: first.adType,
+      product: first.product,
+      advertiser: first.advertiser,
+      label: pickBest("label", LABEL_RANK),
+      status: pickBest("status", STATUS_RANK) ?? first.status,
+      creatorId: ads.find((a) => a.creatorId)?.creatorId ?? null,
+      editorId: ads.find((a) => a.editorId)?.editorId ?? null,
+      adCreatedAt: ads.map((a) => a.adCreatedAt).filter(Boolean).sort()[0] ?? null,
+      ads,
+    };
+  });
+  return sortCreatives(posts, sort);
+}
+
+/** Members who can be picked as creator / editor: the creative team, plus anyone already assigned. */
+export async function getCreativeTeam() {
+  const rows = await db
+    .select({ id: users.id, name: users.name, role: users.role, secondaryRole: users.secondaryRole, isActive: users.isActive })
+    .from(users);
+  return rows
+    .filter((u) => u.isActive && u.role !== "supervisor")
+    .map((u) => ({ id: u.id, name: u.name, creative: u.role === ("creative" as Role) || u.secondaryRole === "creative" }))
+    .sort((a, b) => Number(b.creative) - Number(a.creative) || a.name.localeCompare(b.name));
+}
+
+/** The spreadsheet the creative team keeps, one line per ad (CSV, same column order). */
+export function creativesCsv(rows: CreativeRow[], people: Map<number, string>) {
+  const header = [
+    "ADVERTISER",
+    "PRODUK",
+    "LINK KONTEN",
+    "TIPE IKLAN",
+    "KETERANGAN",
+    "STATUS",
+    "FORMAT KONTEN",
+    "CREATOR",
+    "EDITOR",
+    "IMPRESSION",
+    "AVERAGE PLAY TIME",
+    "THRUPLAYS",
+    "SPEND",
+    "LINK CLICKS",
+    "LEADS",
+    "NAMA IKLAN",
+    "CAMPAIGN",
+    "REACH",
+    "3S VIEWS",
+    "CTR %",
+    "CPM",
+    "HOOK RATE %",
+    "HOLD RATE %",
+    "CPL",
+  ];
+  const dec = (v: number | null) => (v === null ? "" : v.toFixed(2));
+  const csv = (v: string | number) => {
+    const s = String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = rows.map((r) => [
+    r.advertiser?.name ?? "",
+    r.product ?? "",
+    r.permalink ?? "",
+    r.adType,
+    r.label ? CREATIVE_LABEL[r.label] : "",
+    CREATIVE_STATUS_LABEL[r.status],
+    CREATIVE_FORMAT_LABEL[r.format],
+    r.creatorId ? (people.get(r.creatorId) ?? "") : "",
+    r.editorId ? (people.get(r.editorId) ?? "") : "",
+    r.impressions,
+    r.format === "video" ? formatPlayTime(r.avgPlayTime) : "",
+    r.format === "video" ? r.thruplays : "",
+    Math.round(r.spend),
+    r.clicks,
+    r.leads,
+    r.adName,
+    r.campaignName ?? "",
+    r.reach,
+    r.format === "video" ? r.videoViews : "",
+    ...((rates) => [dec(rates.ctr), dec(rates.cpm), dec(rates.hook), dec(rates.hold), dec(rates.cpl)])(creativeRates(sumCreatives([r]))),
+  ]);
+  return "﻿" + [header, ...lines].map((line) => line.map(csv).join(",")).join("\n");
+}
+
+const STATUSES = ["active", "paused", "review", "takedown"] as const;
+const FORMATS = ["video", "grafis", "carousel", "lainnya"] as const;
+const LABELS = ["winning", "good", "average", "poor", "none"] as const;
+const SORTS = ["impressions", "thruplays", "newest", "playtime", "spend", "ctr", "hook", "cpl"] as const;
+const CREATED = ["7d", "30d", "90d", "month"] as const;
+const pick = <T extends string>(list: readonly T[], value: string | undefined) => (list.find((v) => v === value) ?? null) as T | null;
+
+/** Filters from the page's search params (also used by the CSV export, so both show the same rows). */
+export function parseCreativeFilters(sp: Record<string, string | undefined>, me: { id: number }): CreativeFilters {
+  const id = (v: string | undefined) => (v === "me" ? me.id : v && /^\d+$/.test(v) ? Number(v) : null);
+  return {
+    advertiser: id(sp.advertiser),
+    product: sp.product || null,
+    status: pick(STATUSES, sp.status),
+    format: pick(FORMATS, sp.format),
+    label: pick(LABELS, sp.label),
+    creator: id(sp.creator),
+    q: sp.q || null,
+    created: pick(CREATED, sp.created),
+    sort: pick(SORTS, sp.sort) ?? "impressions",
+  };
+}
