@@ -42,6 +42,8 @@ export async function syncCreatives() {
                 status: ad.status,
                 platformStatus: ad.platformStatus,
                 impressions: ad.impressions,
+                reach: ad.reach,
+                videoViews: ad.videoViews,
                 thruplays: ad.thruplays,
                 avgPlayTime: ad.avgPlayTime,
                 spend: ad.spend,
@@ -66,6 +68,8 @@ export async function syncCreatives() {
                 status: sql`excluded.status`,
                 platformStatus: sql`excluded.platform_status`,
                 impressions: sql`excluded.impressions`,
+                reach: sql`excluded.reach`,
+                videoViews: sql`excluded.video_views`,
                 thruplays: sql`excluded.thruplays`,
                 avgPlayTime: sql`excluded.avg_play_time`,
                 spend: sql`excluded.spend`,
@@ -113,8 +117,13 @@ const patchSchema = z.object({
   note: z.string().trim().max(1000).nullable().optional(),
 });
 
-/** Saves the team's fields of one content: Keterangan, format, creator, editor, note. */
+/** Saves the team's fields of one ad: Keterangan, format, creator, editor, note. */
 export async function updateCreative(id: number, patch: z.infer<typeof patchSchema>) {
+  return updateCreatives([id], patch);
+}
+
+/** Same, for every ad that runs one content (post). */
+export async function updateCreatives(ids: number[], patch: z.infer<typeof patchSchema>) {
   const user = await requireUser();
   if (!can.viewCreatives(user.role)) return { error: "Kamu tidak punya akses ke halaman Creative." };
   const parsed = patchSchema.safeParse(patch);
@@ -124,8 +133,9 @@ export async function updateCreative(id: number, patch: z.infer<typeof patchSche
     const found = await db.select({ id: users.id }).from(users).where(and(inArray(users.id, people), eq(users.isActive, true)));
     if (found.length !== new Set(people).size) return { error: "Creator / editor tidak ditemukan." };
   }
-  const [row] = await db.update(adCreatives).set(parsed.data).where(eq(adCreatives.id, id)).returning({ id: adCreatives.id });
-  if (!row) return { error: "Konten tidak ditemukan." };
+  if (!ids.length || ids.length > 500 || !ids.every((id) => Number.isInteger(id) && id > 0)) return { error: "Konten tidak valid." };
+  const updated = await db.update(adCreatives).set(parsed.data).where(inArray(adCreatives.id, ids)).returning({ id: adCreatives.id });
+  if (!updated.length) return { error: "Konten tidak ditemukan." };
   revalidatePath("/creatives");
   return { ok: true };
 }

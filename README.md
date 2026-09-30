@@ -57,8 +57,18 @@ akun Meta yang terdaftar, dengan kolom seperti spreadsheet tim:
 | Creator, Editor | dipilih dari anggota tim (role Creative di urutan atas) |
 | Impression, Avg play time, ThruPlays | insights Meta lifetime |
 
-Isian tim tidak tertimpa saat sinkron. Ada filter (advertiser, produk, status, format, keterangan, creator, "Konten saya"),
-pencarian, urutan, dan **Export CSV** dengan urutan kolom yang sama. Data contoh: `pnpm db:seed-ads-demo`.
+Isian tim tidak tertimpa saat sinkron. Halaman punya tiga tampilan dengan satu baris filter yang sama (waktu iklan dibuat,
+advertiser, produk, format, status, keterangan, creator / "Konten saya", pencarian):
+
+- **Ringkasan** — laporan: konten, winning, spend (CPM), impression (reach), CTR, CPL; konten terbaik berdasarkan
+  impression / CTR / hook rate / CPL; funnel video (impression → tonton 3 detik → ThruPlay, dengan hook & hold rate);
+  konten baru per minggu; performa per format; peringkat tim creative (dibuat, diedit, winning, win rate); per produk.
+- **Galeri konten** — satu kartu per post (iklan yang memakai post sama digabung), klik untuk detail semua angka, daftar
+  iklannya, dan mengubah keterangan / format / creator / editor sekaligus untuk semua iklan post itu.
+- **Tabel iklan** — satu baris per iklan seperti spreadsheet, ditambah Spend, CTR, Hook, Hold, Lead, CPL.
+
+Hook rate = tonton 3 detik ÷ impression, hold rate = ThruPlay ÷ tonton 3 detik (video saja). **Export CSV** memakai urutan
+kolom spreadsheet, dengan kolom metrik tambahan di akhir. Data contoh: `pnpm db:seed-ads-demo`.
 Semua anggota bisa memberi tugas ke Creative (kategori Video iklan, Desain grafis/carousel, Revisi konten, Script).
 
 ## Pengaturan

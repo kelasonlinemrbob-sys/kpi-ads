@@ -178,6 +178,9 @@ export const adCreatives = pgTable(
     platformStatus: varchar("platform_status", { length: 40 }),
     /** Lifetime numbers from Meta insights. */
     impressions: integer("impressions").notNull().default(0),
+    reach: integer("reach").notNull().default(0),
+    /** 3-second video views (Meta "video_view" action), the base of hook and hold rate. */
+    videoViews: integer("video_views").notNull().default(0),
     thruplays: integer("thruplays").notNull().default(0),
     /** Average seconds watched (video only). */
     avgPlayTime: doublePrecision("avg_play_time"),

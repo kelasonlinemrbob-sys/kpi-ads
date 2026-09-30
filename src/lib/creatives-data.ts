@@ -3,7 +3,16 @@ import { and, desc, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
 import { adAccounts, adCreatives, campaigns, users, type AdCreative, type Role } from "@/db/schema";
 import { matchProduct } from "@/lib/ads-matching";
-import { CREATIVE_FORMAT_LABEL, CREATIVE_LABEL, CREATIVE_STATUS_LABEL, formatPlayTime, objectiveLabel } from "@/lib/creatives";
+import {
+  CREATIVE_FORMAT_LABEL,
+  CREATIVE_LABEL,
+  CREATIVE_STATUS_LABEL,
+  creativeRates,
+  formatPlayTime,
+  objectiveLabel,
+  sumCreatives,
+  type CreativeNumbers,
+} from "@/lib/creatives";
 
 /** One row of the Creative page / export, with the advertiser and product resolved like the reports do. */
 export type CreativeRow = {
@@ -24,11 +33,15 @@ export type CreativeRow = {
   creatorId: number | null;
   editorId: number | null;
   impressions: number;
+  reach: number;
+  videoViews: number;
   avgPlayTime: number | null;
   thruplays: number;
   spend: number;
   clicks: number;
   leads: number;
+  /** effective_object_story_id; ads sharing it run the same content. */
+  postId: string | null;
   advertiser: { id: number; name: string } | null;
   product: string | null;
   adCreatedAt: string | null;
@@ -43,7 +56,9 @@ export type CreativeFilters = {
   label?: NonNullable<AdCreative["label"]> | "none" | null;
   creator?: number | null;
   q?: string | null;
-  sort?: "impressions" | "thruplays" | "newest" | "playtime";
+  /** Only ads created in the last N days, or "month" for the running month. */
+  created?: "7d" | "30d" | "90d" | "month" | null;
+  sort?: "impressions" | "thruplays" | "newest" | "playtime" | "spend" | "ctr" | "hook" | "cpl";
 };
 
 export async function getCreativeRows(filters: CreativeFilters = {}): Promise<CreativeRow[]> {
@@ -89,11 +104,14 @@ export async function getCreativeRows(filters: CreativeFilters = {}): Promise<Cr
       creatorId: c.creatorId,
       editorId: c.editorId,
       impressions: c.impressions,
+      reach: c.reach,
+      videoViews: c.videoViews,
       avgPlayTime: c.avgPlayTime,
       thruplays: c.thruplays,
       spend: c.spend,
       clicks: c.clicks,
       leads: c.leads,
+      postId: c.postId,
       advertiser: product ? { id: product.ownerId, name: product.ownerName } : null,
       product: product ? product.product?.trim() || product.name : null,
       adCreatedAt: c.adCreatedAt?.toISOString() ?? null,
@@ -101,8 +119,10 @@ export async function getCreativeRows(filters: CreativeFilters = {}): Promise<Cr
     };
   });
 
+  const createdFrom = createdSince(filters.created ?? null);
   const filtered = all.filter(
     (r) =>
+      (!createdFrom || (r.adCreatedAt !== null && r.adCreatedAt >= createdFrom)) &&
       (!filters.advertiser || r.advertiser?.id === filters.advertiser) &&
       (!filters.product || r.product === filters.product) &&
       (!filters.status || r.status === filters.status) &&
@@ -111,16 +131,104 @@ export async function getCreativeRows(filters: CreativeFilters = {}): Promise<Cr
       (!filters.creator || r.creatorId === filters.creator || r.editorId === filters.creator) &&
       (!q || `${r.adName} ${r.campaignName ?? ""} ${r.permalink ?? ""} ${r.product ?? ""}`.toLowerCase().includes(q)),
   );
-  const sort = filters.sort ?? "impressions";
-  return filtered.sort((a, b) =>
-    sort === "thruplays"
-      ? b.thruplays - a.thruplays
-      : sort === "playtime"
-        ? (b.avgPlayTime ?? -1) - (a.avgPlayTime ?? -1)
-        : sort === "newest"
-          ? (b.adCreatedAt ?? "").localeCompare(a.adCreatedAt ?? "")
-          : b.impressions - a.impressions,
-  );
+  return sortCreatives(filtered, filters.sort ?? "impressions");
+}
+
+type SortKey = NonNullable<CreativeFilters["sort"]>;
+
+/** Sort value for a row or a post group; rates without data sink to the bottom. */
+export function sortValue(r: CreativeNumbers & { adCreatedAt: string | null }, sort: SortKey): number {
+  const rates = creativeRates(sumCreatives([r]));
+  switch (sort) {
+    case "thruplays":
+      return r.thruplays;
+    case "playtime":
+      return r.avgPlayTime ?? -1;
+    case "newest":
+      return r.adCreatedAt ? Date.parse(r.adCreatedAt) : 0;
+    case "spend":
+      return r.spend;
+    case "ctr":
+      return rates.ctr ?? -1;
+    case "hook":
+      return rates.hook ?? -1;
+    case "cpl":
+      // Cheapest lead first: negate, and push "no leads" to the end.
+      return rates.cpl === null ? -Infinity : -rates.cpl;
+    default:
+      return r.impressions;
+  }
+}
+
+export function sortCreatives<T extends CreativeNumbers & { adCreatedAt: string | null }>(rows: T[], sort: SortKey) {
+  return [...rows].sort((a, b) => sortValue(b, sort) - sortValue(a, sort));
+}
+
+function createdSince(created: CreativeFilters["created"]) {
+  if (!created) return null;
+  const now = new Date();
+  if (created === "month") return new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  const days = { "7d": 7, "30d": 30, "90d": 90 }[created];
+  return new Date(now.getTime() - days * 86_400_000).toISOString();
+}
+
+/** A content (post) with every ad that runs it, numbers summed. */
+export type CreativePost = CreativeNumbers & {
+  key: string;
+  permalink: string | null;
+  thumbnailUrl: string | null;
+  adType: string;
+  product: string | null;
+  advertiser: CreativeRow["advertiser"];
+  /** Best verdict among its ads (Winning beats Good …). */
+  label: CreativeRow["label"];
+  /** Active when any of its ads runs. */
+  status: CreativeRow["status"];
+  creatorId: number | null;
+  editorId: number | null;
+  adCreatedAt: string | null;
+  ads: CreativeRow[];
+};
+
+const LABEL_RANK = { winning: 4, good: 3, average: 2, poor: 1 } as const;
+const STATUS_RANK = { active: 4, review: 3, paused: 2, takedown: 1 } as const;
+
+export function groupByPost(rows: CreativeRow[], sort: SortKey = "impressions"): CreativePost[] {
+  const groups = new Map<string, CreativeRow[]>();
+  for (const r of rows) {
+    const key = r.postId ?? `ad-${r.id}`;
+    groups.set(key, [...(groups.get(key) ?? []), r]);
+  }
+  const posts = [...groups.entries()].map(([key, ads]): CreativePost => {
+    const t = sumCreatives(ads);
+    const first = [...ads].sort((a, b) => b.impressions - a.impressions)[0]!;
+    const pickBest = <K extends "label" | "status">(field: K, rank: Record<string, number>) =>
+      ads.reduce((best, r) => ((r[field] && rank[r[field]!]! > (best ? rank[best as string]! : 0)) ? r[field] : best), null as CreativeRow[K] | null);
+    return {
+      key,
+      format: first.format,
+      impressions: t.impressions,
+      reach: t.reach,
+      videoViews: t.videoViews,
+      thruplays: t.thruplays,
+      avgPlayTime: t.avgPlayTime,
+      spend: t.spend,
+      clicks: t.clicks,
+      leads: t.leads,
+      permalink: first.permalink,
+      thumbnailUrl: ads.find((a) => a.thumbnailUrl)?.thumbnailUrl ?? null,
+      adType: first.adType,
+      product: first.product,
+      advertiser: first.advertiser,
+      label: pickBest("label", LABEL_RANK),
+      status: pickBest("status", STATUS_RANK) ?? first.status,
+      creatorId: ads.find((a) => a.creatorId)?.creatorId ?? null,
+      editorId: ads.find((a) => a.editorId)?.editorId ?? null,
+      adCreatedAt: ads.map((a) => a.adCreatedAt).filter(Boolean).sort()[0] ?? null,
+      ads,
+    };
+  });
+  return sortCreatives(posts, sort);
 }
 
 /** Members who can be picked as creator / editor: the creative team, plus anyone already assigned. */
@@ -154,7 +262,15 @@ export function creativesCsv(rows: CreativeRow[], people: Map<number, string>) {
     "LEADS",
     "NAMA IKLAN",
     "CAMPAIGN",
+    "REACH",
+    "3S VIEWS",
+    "CTR %",
+    "CPM",
+    "HOOK RATE %",
+    "HOLD RATE %",
+    "CPL",
   ];
+  const dec = (v: number | null) => (v === null ? "" : v.toFixed(2));
   const csv = (v: string | number) => {
     const s = String(v);
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -177,6 +293,9 @@ export function creativesCsv(rows: CreativeRow[], people: Map<number, string>) {
     r.leads,
     r.adName,
     r.campaignName ?? "",
+    r.reach,
+    r.format === "video" ? r.videoViews : "",
+    ...((rates) => [dec(rates.ctr), dec(rates.cpm), dec(rates.hook), dec(rates.hold), dec(rates.cpl)])(creativeRates(sumCreatives([r]))),
   ]);
   return "﻿" + [header, ...lines].map((line) => line.map(csv).join(",")).join("\n");
 }
@@ -184,7 +303,8 @@ export function creativesCsv(rows: CreativeRow[], people: Map<number, string>) {
 const STATUSES = ["active", "paused", "review", "takedown"] as const;
 const FORMATS = ["video", "grafis", "carousel", "lainnya"] as const;
 const LABELS = ["winning", "good", "average", "poor", "none"] as const;
-const SORTS = ["impressions", "thruplays", "newest", "playtime"] as const;
+const SORTS = ["impressions", "thruplays", "newest", "playtime", "spend", "ctr", "hook", "cpl"] as const;
+const CREATED = ["7d", "30d", "90d", "month"] as const;
 const pick = <T extends string>(list: readonly T[], value: string | undefined) => (list.find((v) => v === value) ?? null) as T | null;
 
 /** Filters from the page's search params (also used by the CSV export, so both show the same rows). */
@@ -198,6 +318,7 @@ export function parseCreativeFilters(sp: Record<string, string | undefined>, me:
     label: pick(LABELS, sp.label),
     creator: id(sp.creator),
     q: sp.q || null,
+    created: pick(CREATED, sp.created),
     sort: pick(SORTS, sp.sort) ?? "impressions",
   };
 }

@@ -334,6 +334,8 @@ export type AdContent = {
   platformStatus: string;
   createdAt: string | null;
   impressions: number;
+  reach: number;
+  videoViews: number;
   thruplays: number;
   avgPlayTime: number | null;
   spend: number;
@@ -362,6 +364,7 @@ type MetaAdRow = {
 type MetaAdInsight = {
   ad_id: string;
   impressions?: string;
+  reach?: string;
   spend?: string;
   inline_link_clicks?: string;
   actions?: { action_type: string; value: string }[];
@@ -427,7 +430,7 @@ export async function fetchMetaAdContents(accountId: string): Promise<AdContentR
   insightsUrl.searchParams.set("date_preset", "maximum");
   insightsUrl.searchParams.set(
     "fields",
-    "ad_id,impressions,spend,inline_link_clicks,actions,video_thruplay_watched_actions,video_avg_time_watched_actions",
+    "ad_id,impressions,reach,spend,inline_link_clicks,actions,video_thruplay_watched_actions,video_avg_time_watched_actions",
   );
   insightsUrl.searchParams.set("limit", "500");
   insightsUrl.searchParams.set("access_token", token);
@@ -459,6 +462,8 @@ export async function fetchMetaAdContents(accountId: string): Promise<AdContentR
           platformStatus: ad.effective_status,
           createdAt: ad.created_time ?? null,
           impressions: Number(stats?.impressions ?? 0),
+          reach: Number(stats?.reach ?? 0),
+          videoViews: Number(stats?.actions?.find((a) => a.action_type === "video_view")?.value ?? 0),
           thruplays: firstValue(stats?.video_thruplay_watched_actions) ?? 0,
           avgPlayTime: firstValue(stats?.video_avg_time_watched_actions),
           spend: Number(stats?.spend ?? 0),

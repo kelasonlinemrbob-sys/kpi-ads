@@ -123,11 +123,13 @@ async function main() {
   let contents = 0;
   for (const [index, c] of AD_CAMPAIGNS.entries()) {
     if (c.account !== "meta") continue;
+    // 3 contents (posts) per campaign, each running in 2 ads.
+    const postVideo = [rand() < 0.65, rand() < 0.65, rand() < 0.65];
     for (let n = 0; n < 6; n++) {
-      const video = rand() < 0.65;
+      const video = postVideo[Math.floor(n / 2)]!;
       const impressions = Math.round(rand() ** 2 * 400_000);
       const status = c.status === "paused" ? "paused" : rand() < 0.3 ? "takedown" : rand() < 0.08 ? "review" : "active";
-      const postId = `12221${String(96200 + ((index * 6 + n) % 9) * 7).padStart(6, "0")}252805`;
+      const postId = `12221${String(96200 + index * 3 + Math.floor(n / 2)).padStart(6, "0")}252805`;
       const winning = impressions > 150_000 && status === "active";
       const creator = video && creativeTeam.length ? creativeTeam[(index + n) % creativeTeam.length]!.id : null;
       const { rowCount } = await db
@@ -145,6 +147,8 @@ async function main() {
           status,
           platformStatus: { active: "ACTIVE", paused: "CAMPAIGN_PAUSED", takedown: "ARCHIVED", review: "PENDING_REVIEW" }[status],
           impressions,
+          reach: Math.round(impressions * (0.55 + rand() * 0.3)),
+          videoViews: video ? Math.round(impressions * (0.18 + rand() * 0.22)) : 0,
           thruplays: video ? Math.round(impressions * (0.02 + rand() * 0.06)) : 0,
           avgPlayTime: video && impressions ? Math.round(2 + rand() * 12) : null,
           spend: Math.round(impressions * (6 + rand() * 6)),

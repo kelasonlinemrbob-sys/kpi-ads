@@ -16,7 +16,15 @@ import {
 import { toast } from "sonner";
 import { syncCreatives, updateCreative } from "@/actions/creatives";
 import type { AdCreative } from "@/db/schema";
-import { CREATIVE_FORMAT_LABEL, CREATIVE_LABEL, CREATIVE_STATUS_LABEL, formatPlayTime } from "@/lib/creatives";
+import {
+  CREATIVE_FORMAT_LABEL,
+  CREATIVE_LABEL,
+  CREATIVE_STATUS_LABEL,
+  creativeRates,
+  fmt,
+  formatPlayTime,
+  sumCreatives,
+} from "@/lib/creatives";
 import type { CreativeRow } from "@/lib/creatives-data";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -86,7 +94,7 @@ export function CreativesTable({ rows: initial, people }: { rows: CreativeRow[];
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[1480px] border-collapse text-[13px]">
+      <table className="w-full min-w-[1900px] border-collapse text-[13px]">
         <thead className="sticky top-0 z-10 bg-muted text-left text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
           <tr>
             <th className={cn(cell, "py-2")}>Advertiser</th>
@@ -105,12 +113,27 @@ export function CreativesTable({ rows: initial, people }: { rows: CreativeRow[];
             <th className={cn(cell, "py-2 text-right")} title="Video ditonton ≥ 15 detik atau sampai habis">
               ThruPlays
             </th>
+            <th className={cn(cell, "py-2 text-right")}>Spend</th>
+            <th className={cn(cell, "py-2 text-right")} title="Klik link ÷ impression">
+              CTR
+            </th>
+            <th className={cn(cell, "py-2 text-right")} title="Tonton 3 detik ÷ impression (video)">
+              Hook
+            </th>
+            <th className={cn(cell, "py-2 text-right")} title="ThruPlay ÷ tonton 3 detik (video)">
+              Hold
+            </th>
+            <th className={cn(cell, "py-2 text-right")}>Lead</th>
+            <th className={cn(cell, "py-2 text-right")} title="Spend ÷ lead">
+              CPL
+            </th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r) => {
             const StatusIcon = STATUS_ICON[r.status];
             const video = r.format === "video";
+            const rates = creativeRates(sumCreatives([r]));
             return (
               <tr key={r.id} className={cn("border-t hover:bg-muted/40", r.status === "takedown" && "text-muted-foreground")}>
                 <td className={cell}>
@@ -229,6 +252,12 @@ export function CreativesTable({ rows: initial, people }: { rows: CreativeRow[];
                 <td className={cn(cell, "text-right font-medium tabular-nums")}>{num.format(r.impressions)}</td>
                 <td className={cn(cell, "text-right tabular-nums")}>{video ? formatPlayTime(r.avgPlayTime) : <Muted />}</td>
                 <td className={cn(cell, "text-right tabular-nums")}>{video ? num.format(r.thruplays) : <Muted />}</td>
+                <td className={cn(cell, "text-right tabular-nums")}>{fmt.rpCompact(r.spend)}</td>
+                <td className={cn(cell, "text-right tabular-nums")}>{fmt.pct(rates.ctr)}</td>
+                <td className={cn(cell, "text-right tabular-nums")}>{video ? fmt.pct(rates.hook) : <Muted />}</td>
+                <td className={cn(cell, "text-right tabular-nums")}>{video ? fmt.pct(rates.hold) : <Muted />}</td>
+                <td className={cn(cell, "text-right tabular-nums")}>{num.format(r.leads)}</td>
+                <td className={cn(cell, "text-right tabular-nums")}>{fmt.rp(rates.cpl)}</td>
               </tr>
             );
           })}

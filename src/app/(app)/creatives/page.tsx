@@ -2,28 +2,37 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { eq, max } from "drizzle-orm";
-import { ClapperboardIcon, DownloadIcon, EyeIcon, PlayIcon, SearchIcon, TrophyIcon, type LucideIcon } from "lucide-react";
+import { ClapperboardIcon, DownloadIcon, LayoutGridIcon, PieChartIcon, SearchIcon, TableIcon, type LucideIcon } from "lucide-react";
 import { db } from "@/db";
 import { adAccounts, adCreatives } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
-import { CREATIVE_FORMAT_LABEL, CREATIVE_LABEL, CREATIVE_STATUS_LABEL, formatPlayTime } from "@/lib/creatives";
-import { getCreativeRows, getCreativeTeam, parseCreativeFilters } from "@/lib/creatives-data";
+import { CREATIVE_FORMAT_LABEL, CREATIVE_LABEL, CREATIVE_STATUS_LABEL, creativeRates, fmt, sumCreatives } from "@/lib/creatives";
+import { getCreativeRows, getCreativeTeam, groupByPost, parseCreativeFilters } from "@/lib/creatives-data";
 import { can } from "@/lib/roles";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EmptyState, PageHeader, Panel } from "@/components/dashboard/panel";
 import { UrlSelect } from "@/components/dashboard/url-select";
+import { CreativeGallery } from "./creative-gallery";
+import { CreativeReport } from "./creative-report";
 import { CreativesTable, SyncCreativesButton } from "./creatives-table";
 
 export const metadata: Metadata = { title: "Creative" };
 
-const num = new Intl.NumberFormat("id-ID");
-const compact = new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 1 });
+const VIEWS: { key: "ringkasan" | "galeri" | "tabel"; label: string; icon: LucideIcon }[] = [
+  { key: "ringkasan", label: "Ringkasan", icon: PieChartIcon },
+  { key: "galeri", label: "Galeri konten", icon: LayoutGridIcon },
+  { key: "tabel", label: "Tabel iklan", icon: TableIcon },
+];
+const RANKS = ["impressions", "ctr", "hook", "cpl"] as const;
 
 export default async function CreativesPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const user = await requireUser();
   if (!can.viewCreatives(user.role)) redirect("/dashboard");
   const sp = await searchParams;
+  const view = VIEWS.find((v) => v.key === sp.view)?.key ?? "ringkasan";
+  const rank = RANKS.find((r) => r === sp.rank) ?? "impressions";
   const filters = parseCreativeFilters(sp, user);
 
   const [rows, allRows, team, metaAccounts, [lastSync]] = await Promise.all([
@@ -33,21 +42,28 @@ export default async function CreativesPage({ searchParams }: { searchParams: Pr
     db.select({ id: adAccounts.id }).from(adAccounts).where(eq(adAccounts.platform, "meta")),
     db.select({ at: max(adCreatives.syncedAt) }).from(adCreatives),
   ]);
+  const posts = groupByPost(rows, filters.sort);
 
   // Filter options come from everything synced, so a filter never hides its own choices.
   const advertisers = [...new Map(allRows.filter((r) => r.advertiser).map((r) => [r.advertiser!.id, r.advertiser!.name])).entries()];
   const products = [...new Set(allRows.map((r) => r.product).filter((p): p is string => !!p))].sort();
-  const videos = rows.filter((r) => r.format === "video" && r.avgPlayTime !== null && r.impressions > 0);
-  const avgPlay = videos.length ? videos.reduce((sum, r) => sum + r.avgPlayTime! * r.impressions, 0) / videos.reduce((s, r) => s + r.impressions, 0) : null;
-  const exportHref = `/api/creatives/export?${new URLSearchParams(Object.entries(sp).filter(([, v]) => v) as [string, string][])}`;
   const isCreative = user.role === "creative" || user.secondaryRole === "creative";
+  const query = (patch: Record<string, string | null>) => {
+    const params = new URLSearchParams(Object.entries(sp).filter(([, v]) => v) as [string, string][]);
+    for (const [k, v] of Object.entries(patch)) (v === null ? params.delete(k) : params.set(k, v));
+    return params.toString();
+  };
+  const exportHref = `/api/creatives/export?${query({ view: null, rank: null })}`;
+  const activeFilters = ["advertiser", "product", "status", "format", "label", "creator", "q", "created"].filter((k) => sp[k]).length;
+  const totals = sumCreatives(rows);
+  const rates = creativeRates(totals);
 
   return (
     <>
       <PageHeader
         title="Creative"
-        description={`Konten iklan Meta Ads beserta performanya, untuk tim creative dan advertiser.${
-          lastSync?.at ? ` Terakhir sinkron ${lastSync.at.toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}.` : ""
+        description={`Laporan konten iklan Meta Ads untuk tim creative dan advertiser.${
+          lastSync?.at ? ` Data per ${lastSync.at.toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}.` : ""
         }`}
         actions={
           <>
@@ -61,18 +77,34 @@ export default async function CreativesPage({ searchParams }: { searchParams: Pr
         }
       />
 
-      <div className="mb-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat title="Konten" icon={ClapperboardIcon} value={num.format(rows.length)} hint={`${rows.filter((r) => r.status === "active").length} aktif`} />
-        <Stat title="Winning" icon={TrophyIcon} value={num.format(rows.filter((r) => r.label === "winning").length)} hint="ditandai tim" />
-        <Stat title="Impression" icon={EyeIcon} value={compact.format(rows.reduce((s, r) => s + r.impressions, 0))} hint="lifetime" />
-        <Stat
-          title="Avg play time video"
-          icon={PlayIcon}
-          value={avgPlay === null ? "–" : `${formatPlayTime(avgPlay)} dtk`}
-          hint={`${num.format(rows.reduce((s, r) => s + r.thruplays, 0))} ThruPlays`}
-        />
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <nav className="inline-flex rounded-lg bg-muted p-1" aria-label="Tampilan">
+          {VIEWS.map((v) => (
+            <Link
+              key={v.key}
+              href={`/creatives?${query({ view: v.key === "ringkasan" ? null : v.key })}`}
+              aria-current={view === v.key ? "page" : undefined}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-sm transition-colors",
+                view === v.key ? "bg-card font-medium shadow-sm" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <v.icon className="size-3.5" /> {v.label}
+            </Link>
+          ))}
+        </nav>
+        {view !== "ringkasan" && rows.length > 0 && (
+          <p className="text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">{fmt.num(posts.length)}</span> konten ·{" "}
+            <span className="font-medium text-foreground">{fmt.num(rows.length)}</span> iklan · impr{" "}
+            <span className="font-medium text-foreground">{fmt.compact(totals.impressions)}</span> · CTR{" "}
+            <span className="font-medium text-foreground">{fmt.pct(rates.ctr)}</span> · CPL{" "}
+            <span className="font-medium text-foreground">{fmt.rp(rates.cpl)}</span>
+          </p>
+        )}
       </div>
 
+      {/* One filter row for every view: the report, the gallery and the table show the same slice. */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <form className="relative" action="/creatives">
           {Object.entries(sp)
@@ -81,8 +113,20 @@ export default async function CreativesPage({ searchParams }: { searchParams: Pr
               <input key={k} type="hidden" name={k} value={v} />
             ))}
           <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input name="q" defaultValue={sp.q ?? ""} placeholder="Cari iklan, campaign, link…" className="h-8 w-60 pl-8" />
+          <Input name="q" defaultValue={sp.q ?? ""} placeholder="Cari iklan, campaign, link…" className="h-8 w-56 pl-8" />
         </form>
+        <UrlSelect
+          param="created"
+          label="Iklan dibuat"
+          value={sp.created ?? "all"}
+          options={[
+            { value: "all", label: "Semua waktu" },
+            { value: "7d", label: "Dibuat 7 hari terakhir" },
+            { value: "30d", label: "Dibuat 30 hari terakhir" },
+            { value: "90d", label: "Dibuat 90 hari terakhir" },
+            { value: "month", label: "Dibuat bulan ini" },
+          ]}
+        />
         <UrlSelect
           param="advertiser"
           label="Advertiser"
@@ -100,16 +144,16 @@ export default async function CreativesPage({ searchParams }: { searchParams: Pr
           options={[{ value: "all", label: "Semua produk" }, ...products.map((p) => ({ value: p, label: p }))]}
         />
         <UrlSelect
-          param="status"
-          label="Status"
-          value={sp.status ?? "all"}
-          options={[{ value: "all", label: "Semua status" }, ...Object.entries(CREATIVE_STATUS_LABEL).map(([value, label]) => ({ value, label }))]}
-        />
-        <UrlSelect
           param="format"
           label="Format"
           value={sp.format ?? "all"}
           options={[{ value: "all", label: "Semua format" }, ...Object.entries(CREATIVE_FORMAT_LABEL).map(([value, label]) => ({ value, label }))]}
+        />
+        <UrlSelect
+          param="status"
+          label="Status"
+          value={sp.status ?? "all"}
+          options={[{ value: "all", label: "Semua status" }, ...Object.entries(CREATIVE_STATUS_LABEL).map(([value, label]) => ({ value, label }))]}
         />
         <UrlSelect
           param="label"
@@ -131,26 +175,44 @@ export default async function CreativesPage({ searchParams }: { searchParams: Pr
             ...team.filter((p) => p.creative).map((p) => ({ value: String(p.id), label: p.name })),
           ]}
         />
-        <UrlSelect
-          param="sort"
-          label="Urutkan"
-          value={sp.sort ?? "impressions"}
-          options={[
-            { value: "impressions", label: "Impression terbanyak" },
-            { value: "thruplays", label: "ThruPlays terbanyak" },
-            { value: "playtime", label: "Play time terlama" },
-            { value: "newest", label: "Iklan terbaru" },
-          ]}
-        />
-        {Object.values(sp).some(Boolean) && (
-          <Link href="/creatives" className="text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground">
-            Reset
+        {view === "ringkasan" ? (
+          <UrlSelect
+            param="rank"
+            label="Konten terbaik berdasarkan"
+            value={rank}
+            options={[
+              { value: "impressions", label: "Terbaik: impression" },
+              { value: "ctr", label: "Terbaik: CTR" },
+              { value: "hook", label: "Terbaik: hook rate" },
+              { value: "cpl", label: "Terbaik: CPL termurah" },
+            ]}
+          />
+        ) : (
+          <UrlSelect
+            param="sort"
+            label="Urutkan"
+            value={sp.sort ?? "impressions"}
+            options={[
+              { value: "impressions", label: "Impression terbanyak" },
+              { value: "spend", label: "Spend terbesar" },
+              { value: "ctr", label: "CTR tertinggi" },
+              { value: "hook", label: "Hook rate tertinggi" },
+              { value: "cpl", label: "CPL termurah" },
+              { value: "thruplays", label: "ThruPlays terbanyak" },
+              { value: "playtime", label: "Play time terlama" },
+              { value: "newest", label: "Iklan terbaru" },
+            ]}
+          />
+        )}
+        {activeFilters > 0 && (
+          <Link href={`/creatives?${query({ advertiser: null, product: null, status: null, format: null, label: null, creator: null, q: null, created: null })}`} className="text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground">
+            Reset filter ({activeFilters})
           </Link>
         )}
       </div>
 
-      <Panel title={`${num.format(rows.length)} iklan`} icon={ClapperboardIcon} iconPosition="left" bodyClassName="p-0">
-        {allRows.length === 0 ? (
+      {allRows.length === 0 ? (
+        <Panel>
           <EmptyState
             icon={ClapperboardIcon}
             title="Belum ada konten iklan"
@@ -161,28 +223,25 @@ export default async function CreativesPage({ searchParams }: { searchParams: Pr
             }
             action={metaAccounts.length > 0 ? <SyncCreativesButton /> : undefined}
           />
-        ) : rows.length === 0 ? (
+        </Panel>
+      ) : rows.length === 0 ? (
+        <Panel>
           <p className="px-4 py-10 text-center text-sm text-muted-foreground">Tidak ada iklan yang cocok dengan filter.</p>
-        ) : (
+        </Panel>
+      ) : view === "ringkasan" ? (
+        <CreativeReport rows={rows} posts={posts} people={team} rank={rank} />
+      ) : view === "galeri" ? (
+        <CreativeGallery posts={posts} people={team} />
+      ) : (
+        <Panel title={`${fmt.num(rows.length)} iklan`} icon={TableIcon} iconPosition="left" bodyClassName="p-0">
           <CreativesTable rows={rows} people={team} />
-        )}
-      </Panel>
-      <p className="mt-2 text-xs text-muted-foreground">
-        Link konten, tipe iklan, status, format, impression, avg play time dan ThruPlays diambil dari Meta (lifetime). Keterangan, creator,
-        editor dan format yang diubah manual disimpan tim dan tidak tertimpa saat sinkron. Advertiser & produk dicocokkan dari kode product
-        di nama campaign.
+        </Panel>
+      )}
+
+      <p className="mt-3 text-xs text-muted-foreground">
+        Angka lifetime dari Meta. Keterangan, creator, editor dan format yang diubah manual disimpan tim dan tidak tertimpa saat sinkron.
+        Iklan yang memakai post yang sama digabung menjadi satu konten di Ringkasan dan Galeri.
       </p>
     </>
-  );
-}
-
-function Stat({ title, icon, value, hint }: { title: string; icon: LucideIcon; value: string; hint: string }) {
-  return (
-    <Panel title={title} icon={icon}>
-      <div className="flex items-baseline gap-2 px-4 py-3">
-        <span className="text-2xl font-medium">{value}</span>
-        <span className="text-xs text-muted-foreground">{hint}</span>
-      </div>
-    </Panel>
   );
 }
