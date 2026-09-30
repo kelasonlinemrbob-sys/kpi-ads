@@ -40,6 +40,27 @@ Aturan di `src/lib/task-rules.ts`, dipakai server (validasi) dan UI (pilihan yan
 - Scope board: *Menunggu review saya*, *Tim advertiser junior* (Senior), filter role (Supervisor) dan filter kategori.
   Badge menu Tasks = tugas terbuka + tugas yang menunggu persetujuanmu.
 
+## Creative (konten iklan Meta)
+
+Role **Creative** (tambah di Team → Members) punya KPI sendiri (Konten Diproduksi, Konten Tayang, Konten Winning) dan menu
+**Creative** (juga terlihat oleh supervisor dan advertiser). Klik **Sinkron dari Meta** untuk mengambil semua iklan dari
+akun Meta yang terdaftar, dengan kolom seperti spreadsheet tim:
+
+| Kolom | Sumber |
+|---|---|
+| Advertiser, Produk | kode product di nama campaign (sama seperti Generate dari Ads) |
+| Link konten | post iklan (`effective_object_story_id` → facebook.com/{page}/posts/{post}) |
+| Tipe iklan | objective campaign (konversi, traffic, leads, …) |
+| Keterangan | diisi tim: Winning / Good / Average / Kurang |
+| Status | status iklan di Meta: Active / Paused / Review / Takedown (ditolak, dihapus, diarsipkan) |
+| Format konten | dari Meta (Video / Grafis / Carousel), bisa diubah manual |
+| Creator, Editor | dipilih dari anggota tim (role Creative di urutan atas) |
+| Impression, Avg play time, ThruPlays | insights Meta lifetime |
+
+Isian tim tidak tertimpa saat sinkron. Ada filter (advertiser, produk, status, format, keterangan, creator, "Konten saya"),
+pencarian, urutan, dan **Export CSV** dengan urutan kolom yang sama. Data contoh: `pnpm db:seed-ads-demo`.
+Semua anggota bisa memberi tugas ke Creative (kategori Video iklan, Desain grafis/carousel, Revisi konten, Script).
+
 ## Pengaturan
 
 Halaman **Pengaturan** dibagi per tab: *Profil* (nama, jabatan, role & info akun), *Keamanan* (ganti password dengan

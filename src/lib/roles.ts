@@ -1,12 +1,13 @@
 import type { AdvertiserLevel, Role } from "@/db/schema";
 
-export const ROLES: Role[] = ["supervisor", "advertiser", "webmaster", "seo"];
+export const ROLES: Role[] = ["supervisor", "advertiser", "webmaster", "seo", "creative"];
 
 export const ROLE_LABEL: Record<Role, string> = {
   supervisor: "Supervisor",
   advertiser: "Advertiser",
   webmaster: "Web Master",
   seo: "SEO Specialist",
+  creative: "Creative",
 };
 
 export const ADVERTISER_LEVEL_LABEL: Record<AdvertiserLevel, string> = { junior: "Junior", senior: "Senior" };
@@ -28,13 +29,14 @@ export const isSeniorAdvertiser = (user: { role: Role; advertiserLevel?: Adverti
   user.role === "advertiser" && user.advertiserLevel === "senior";
 
 /** Roles whose members submit daily KPI reports. */
-export const MEMBER_ROLES: Exclude<Role, "supervisor">[] = ["advertiser", "webmaster", "seo"];
+export const MEMBER_ROLES: Exclude<Role, "supervisor">[] = ["advertiser", "webmaster", "seo", "creative"];
 
 export const ROLE_BADGE: Record<Role, string> = {
   supervisor: "bg-primary/10 text-foreground border-primary/15",
   advertiser: "bg-info/10 text-info border-info/20",
   webmaster: "bg-[oklch(0.6_0.17_300)]/10 text-[oklch(0.5_0.17_300)] border-[oklch(0.6_0.17_300)]/20 dark:text-[oklch(0.75_0.13_300)]",
   seo: "bg-success/10 text-success border-success/20",
+  creative: "bg-warning/10 text-[color-mix(in_oklch,var(--warning),black_25%)] border-warning/25 dark:text-warning",
 };
 
 export const can = {
@@ -45,6 +47,8 @@ export const can = {
   viewCampaigns: (r: Role) => r === "supervisor" || r === "advertiser" || r === "webmaster",
   editCampaigns: (r: Role) => r === "supervisor" || r === "advertiser",
   viewAllMembers: (r: Role) => r === "supervisor",
+  /** Creative page: ad contents pulled from Meta with their performance. */
+  viewCreatives: (r: Role) => r === "supervisor" || r === "advertiser" || r === "creative",
   /** Fill in and finalise performance appraisals (senior advertisers only). */
   manageAppraisals: (r: Role) => r === "supervisor",
 };

@@ -15,7 +15,8 @@ const isJunior = (p: TaskPerson) => p.role === "advertiser" && p.advertiserLevel
  * - Supervisor: anyone.
  * - Advertiser senior: themselves, junior advertisers (mentoring), web master & SEO (requests).
  * - Advertiser junior: themselves, web master & SEO (requests such as a landing page).
- * - Web master / SEO: themselves and each other.
+ * - Web master / SEO / Creative: themselves and each other.
+ * Everyone can send requests to web master, SEO and creative (e.g. an advertiser asking for a video).
  */
 export function canAssign(actor: TaskPerson, assignee: TaskPerson) {
   if (actor.role === "supervisor" || actor.id === assignee.id) return true;
@@ -25,7 +26,7 @@ export function canAssign(actor: TaskPerson, assignee: TaskPerson) {
 
 function roleMayAssign(actor: TaskPerson, actorRole: Role, assignee: TaskPerson, assigneeRole: Role) {
   if (assigneeRole === "supervisor") return false;
-  if (assigneeRole === "webmaster" || assigneeRole === "seo") return true;
+  if (assigneeRole === "webmaster" || assigneeRole === "seo" || assigneeRole === "creative") return true;
   // Advertiser work: only a senior advertiser to a junior (mentoring).
   return actorRole === "advertiser" && assigneeRole === "advertiser" && isSenior(actor) && isJunior(assignee);
 }
@@ -33,9 +34,8 @@ function roleMayAssign(actor: TaskPerson, actorRole: Role, assignee: TaskPerson,
 /** One line for the dialog explaining the rule above to the current user. */
 export function assignRuleHint(actor: TaskPerson) {
   if (actor.role === "supervisor") return "Supervisor bisa memberi tugas ke semua anggota.";
-  if (isSenior(actor)) return "Kamu bisa memberi tugas ke diri sendiri, advertiser junior, web master dan SEO.";
-  if (actor.role === "advertiser") return "Kamu bisa memberi tugas ke diri sendiri, web master dan SEO.";
-  return "Kamu bisa memberi tugas ke diri sendiri, web master dan SEO.";
+  if (isSenior(actor)) return "Kamu bisa memberi tugas ke diri sendiri, advertiser junior, web master, SEO dan creative.";
+  return "Kamu bisa memberi tugas ke diri sendiri, web master, SEO dan creative.";
 }
 
 export type TaskCategory = {
@@ -97,6 +97,20 @@ export const TASK_CATEGORIES: TaskCategory[] = [
   { key: "keyword_research", label: "Riset keyword", roles: ["seo"] },
   { key: "onpage_seo", label: "On-page & technical SEO", roles: ["seo"] },
   { key: "seo_report", label: "Laporan SEO", roles: ["seo"] },
+  {
+    key: "video_ad",
+    label: "Video iklan",
+    roles: ["creative"],
+    template: "- [ ] Brief & angle dari advertiser\n- [ ] Script / hook (3 detik pertama)\n- [ ] Shooting / footage\n- [ ] Editing 9:16 + 1:1\n- [ ] Subtitle & CTA\n- [ ] Kirim ke advertiser",
+  },
+  {
+    key: "graphic_ad",
+    label: "Desain grafis / carousel",
+    roles: ["creative"],
+    template: "- [ ] Brief & copy\n- [ ] Draft desain\n- [ ] Revisi\n- [ ] Export ukuran feed & story\n- [ ] Kirim ke advertiser",
+  },
+  { key: "content_revision", label: "Revisi konten", roles: ["creative"] },
+  { key: "ad_script", label: "Script & copywriting", roles: ["creative"] },
   { key: "general", label: "Lainnya", roles: [] },
 ];
 

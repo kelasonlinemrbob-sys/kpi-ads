@@ -11,6 +11,7 @@ import { db } from "./index";
 import {
   adAccounts,
   adCampaigns,
+  adCreatives,
   advertiserReportItemCampaigns,
   advertiserReportItems,
   campaigns,
@@ -117,6 +118,48 @@ async function main() {
       .onConflictDoNothing();
   }
 
+  // 2b. Ad contents for the Creative page: a few ads per Meta campaign, some reusing the same post.
+  const creativeTeam = await db.select({ id: users.id }).from(users).where(eq(users.role, "creative"));
+  let contents = 0;
+  for (const [index, c] of AD_CAMPAIGNS.entries()) {
+    if (c.account !== "meta") continue;
+    for (let n = 0; n < 6; n++) {
+      const video = rand() < 0.65;
+      const impressions = Math.round(rand() ** 2 * 400_000);
+      const status = c.status === "paused" ? "paused" : rand() < 0.3 ? "takedown" : rand() < 0.08 ? "review" : "active";
+      const postId = `12221${String(96200 + ((index * 6 + n) % 9) * 7).padStart(6, "0")}252805`;
+      const winning = impressions > 150_000 && status === "active";
+      const creator = video && creativeTeam.length ? creativeTeam[(index + n) % creativeTeam.length]!.id : null;
+      const { rowCount } = await db
+        .insert(adCreatives)
+        .values({
+          adAccountId: accountIds.get("meta")!,
+          externalAdId: `${DEMO_PREFIX}ad-${index + 1}-${n + 1}`,
+          adName: `${c.name.startsWith("[") ? c.name.split("]")[0] + "] " : ""}${video ? "Video" : "Grafis"} ${n + 1}`,
+          campaignExternalId: `${DEMO_PREFIX}meta-${index + 1}`,
+          campaignName: c.name,
+          objective: c.objective,
+          postId: `61557584168662_${postId}`,
+          permalink: `https://www.facebook.com/61557584168662/posts/${postId}/`,
+          format: video ? "video" : "grafis",
+          status,
+          platformStatus: { active: "ACTIVE", paused: "CAMPAIGN_PAUSED", takedown: "ARCHIVED", review: "PENDING_REVIEW" }[status],
+          impressions,
+          thruplays: video ? Math.round(impressions * (0.02 + rand() * 0.06)) : 0,
+          avgPlayTime: video && impressions ? Math.round(2 + rand() * 12) : null,
+          spend: Math.round(impressions * (6 + rand() * 6)),
+          clicks: Math.round(impressions * (0.005 + rand() * 0.015)),
+          leads: Math.round(impressions * rand() * 0.002),
+          label: winning ? "winning" : impressions > 1_000 ? "good" : null,
+          creatorId: creator,
+          editorId: creator && creativeTeam.length > 1 ? creativeTeam[(index + n + 1) % creativeTeam.length]!.id : null,
+          adCreatedAt: new Date(Date.now() - (n + index) * 3 * 86_400_000),
+        })
+        .onConflictDoNothing();
+      contents += rowCount ?? 0;
+    }
+  }
+
   // 3. Link the seed products to the accounts with their product code
   const productIds = new Map<string, { id: number; platform: "meta" | "google" }>();
   for (const p of PRODUCTS) {
@@ -206,7 +249,7 @@ async function main() {
     }
   }
 
-  console.log(`Demo ads data ready: ${AD_CAMPAIGNS.length} campaigns, ${added} report rows added.`);
+  console.log(`Demo ads data ready: ${AD_CAMPAIGNS.length} campaigns, ${contents} ad contents, ${added} report rows added.`);
 }
 
 main()

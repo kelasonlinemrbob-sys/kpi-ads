@@ -70,6 +70,10 @@ const HEADLINE: Record<Exclude<Role, "supervisor">, { key: string; icon: LucideI
     { key: "articles", icon: FileTextIcon },
     { key: "top10_keywords", icon: KeyRoundIcon },
   ],
+  creative: [
+    { key: "content_produced", icon: FileTextIcon },
+    { key: "content_winning", icon: RocketIcon },
+  ],
 };
 
 const TEAM_TREND_KEYS = ["leads", "closing", "revenue", "ad_spend", "landing_pages", "issues_resolved", "articles", "organic_sessions"];

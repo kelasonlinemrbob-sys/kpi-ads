@@ -15,7 +15,7 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 
-export const roleEnum = pgEnum("role", ["supervisor", "advertiser", "webmaster", "seo"]);
+export const roleEnum = pgEnum("role", ["supervisor", "advertiser", "webmaster", "seo", "creative"]);
 export const metricUnitEnum = pgEnum("metric_unit", ["number", "currency", "percent", "ratio"]);
 /** sum = total over the period, avg = daily average, last = latest reported value, ratio = sum(numerator)/sum(denominator) */
 export const aggregationEnum = pgEnum("aggregation", ["sum", "avg", "last", "ratio"]);
@@ -28,6 +28,10 @@ export const campaignStatusEnum = pgEnum("campaign_status", ["draft", "active", 
 /** Seniority within the advertiser role; only senior advertisers get the performance appraisal. */
 export const advertiserLevelEnum = pgEnum("advertiser_level", ["junior", "senior"]);
 export const appraisalStatusEnum = pgEnum("appraisal_status", ["draft", "final"]);
+/** Creative page ("Konten Iklan"): format of the ad content, its platform status and the team's verdict. */
+export const creativeFormatEnum = pgEnum("creative_format", ["video", "grafis", "carousel", "lainnya"]);
+export const creativeStatusEnum = pgEnum("creative_status", ["active", "paused", "review", "takedown"]);
+export const creativeLabelEnum = pgEnum("creative_label", ["winning", "good", "average", "poor"]);
 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -144,6 +148,54 @@ export const adAccounts = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("ad_accounts_platform_account").on(t.platform, t.accountId)],
+);
+
+/**
+ * One Meta ad and the content (post) it runs, refreshed by "Sinkron dari Meta" on the Creative page.
+ * Platform fields are overwritten on every sync; label / format override / creator / editor / note are
+ * filled in by the team and kept.
+ */
+export const adCreatives = pgTable(
+  "ad_creatives",
+  {
+    id: serial("id").primaryKey(),
+    adAccountId: integer("ad_account_id")
+      .notNull()
+      .references(() => adAccounts.id, { onDelete: "cascade" }),
+    externalAdId: varchar("external_ad_id", { length: 64 }).notNull(),
+    adName: varchar("ad_name", { length: 255 }).notNull(),
+    campaignExternalId: varchar("campaign_external_id", { length: 64 }),
+    campaignName: varchar("campaign_name", { length: 255 }),
+    /** Meta campaign objective, e.g. OUTCOME_SALES → "Iklan konversi". */
+    objective: varchar("objective", { length: 60 }),
+    /** effective_object_story_id, "<pageId>_<postId>". */
+    postId: varchar("post_id", { length: 80 }),
+    permalink: text("permalink"),
+    thumbnailUrl: text("thumbnail_url"),
+    format: creativeFormatEnum("format").notNull().default("lainnya"),
+    formatOverride: creativeFormatEnum("format_override"),
+    status: creativeStatusEnum("status").notNull(),
+    platformStatus: varchar("platform_status", { length: 40 }),
+    /** Lifetime numbers from Meta insights. */
+    impressions: integer("impressions").notNull().default(0),
+    thruplays: integer("thruplays").notNull().default(0),
+    /** Average seconds watched (video only). */
+    avgPlayTime: doublePrecision("avg_play_time"),
+    spend: doublePrecision("spend").notNull().default(0),
+    clicks: integer("clicks").notNull().default(0),
+    leads: integer("leads").notNull().default(0),
+    label: creativeLabelEnum("label"),
+    creatorId: integer("creator_id").references(() => users.id, { onDelete: "set null" }),
+    editorId: integer("editor_id").references(() => users.id, { onDelete: "set null" }),
+    note: text("note"),
+    adCreatedAt: timestamp("ad_created_at", { withTimezone: true }),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("ad_creatives_account_ad").on(t.adAccountId, t.externalAdId),
+    index("ad_creatives_creator").on(t.creatorId),
+  ],
 );
 
 /** Campaign as it exists on Meta / Google Ads, refreshed by "Sinkron dari Ads". */
@@ -388,6 +440,7 @@ export const appSettings = pgTable("app_settings", {
 export type User = typeof users.$inferSelect;
 export type AdvertiserLevel = (typeof advertiserLevelEnum.enumValues)[number];
 export type PerformanceAppraisal = typeof performanceAppraisals.$inferSelect;
+export type AdCreative = typeof adCreatives.$inferSelect;
 export type WaSession = typeof waSessions.$inferSelect;
 export type Role = (typeof roleEnum.enumValues)[number];
 export type KpiMetric = typeof kpiMetrics.$inferSelect;

@@ -317,3 +317,157 @@ async function queryGoogleCampaigns(
     return { ok: false, error: `Gagal menghubungi Google Ads API: ${(error as Error).message}` };
   }
 }
+
+/* ------------------------------ Ad contents (Creative page) ------------------------------ */
+
+export type AdContent = {
+  adId: string;
+  adName: string;
+  campaignId: string | null;
+  campaignName: string | null;
+  objective: string | null;
+  postId: string | null;
+  permalink: string | null;
+  thumbnailUrl: string | null;
+  format: "video" | "grafis" | "carousel" | "lainnya";
+  status: "active" | "paused" | "review" | "takedown";
+  platformStatus: string;
+  createdAt: string | null;
+  impressions: number;
+  thruplays: number;
+  avgPlayTime: number | null;
+  spend: number;
+  clicks: number;
+  leads: number;
+};
+
+export type AdContentResult = { ok: true; ads: AdContent[] } | { ok: false; error: string };
+
+type MetaAdRow = {
+  id: string;
+  name: string;
+  effective_status: string;
+  created_time?: string;
+  campaign?: { id: string; name: string; objective?: string };
+  creative?: {
+    object_type?: string;
+    effective_object_story_id?: string;
+    thumbnail_url?: string;
+    video_id?: string;
+    instagram_permalink_url?: string;
+    object_story_spec?: { video_data?: unknown; link_data?: { child_attachments?: unknown[] } };
+  };
+};
+
+type MetaAdInsight = {
+  ad_id: string;
+  impressions?: string;
+  spend?: string;
+  inline_link_clicks?: string;
+  actions?: { action_type: string; value: string }[];
+  video_thruplay_watched_actions?: { action_type: string; value: string }[];
+  video_avg_time_watched_actions?: { action_type: string; value: string }[];
+};
+
+function contentStatus(effective: string): AdContent["status"] {
+  if (effective === "ACTIVE") return "active";
+  if (effective === "PAUSED" || effective === "CAMPAIGN_PAUSED" || effective === "ADSET_PAUSED") return "paused";
+  if (effective === "DISAPPROVED" || effective === "DELETED" || effective === "ARCHIVED") return "takedown";
+  return "review"; // PENDING_REVIEW, IN_PROCESS, WITH_ISSUES, PREAPPROVED, …
+}
+
+function contentFormat(creative: MetaAdRow["creative"]): AdContent["format"] {
+  if (!creative) return "lainnya";
+  if (creative.video_id || creative.object_type === "VIDEO" || creative.object_story_spec?.video_data) return "video";
+  if ((creative.object_story_spec?.link_data?.child_attachments?.length ?? 0) > 1) return "carousel";
+  if (creative.object_type === "PHOTO" || creative.object_type === "SHARE" || creative.object_type === "STATUS") return "grafis";
+  return "lainnya";
+}
+
+/** "<pageId>_<postId>" → https://www.facebook.com/<pageId>/posts/<postId>/ */
+export function postPermalink(storyId: string | null | undefined) {
+  const [page, post] = (storyId ?? "").split("_");
+  return page && post ? `https://www.facebook.com/${page}/posts/${post}/` : null;
+}
+
+async function metaPages<T>(firstUrl: string): Promise<{ ok: true; rows: T[] } | { ok: false; error: string }> {
+  const rows: T[] = [];
+  let next: string | undefined = firstUrl;
+  while (next) {
+    const res = await fetch(next, { cache: "no-store" });
+    const body = (await res.json().catch(() => null)) as { data?: T[]; paging?: { next?: string }; error?: MetaApiError } | null;
+    if (!body) return { ok: false, error: `Gagal menghubungi Meta API: respons tidak valid (HTTP ${res.status}).` };
+    if (!res.ok || body.error) return { ok: false, error: metaErrorMessage(body.error, res.status) };
+    rows.push(...(body.data ?? []));
+    next = body.paging?.next;
+  }
+  return { ok: true, rows };
+}
+
+/**
+ * Every ad of a Meta ad account with the post it runs (link, format, thumbnail) and its lifetime numbers:
+ * impressions, ThruPlays and average play time for videos, spend, link clicks and leads.
+ */
+export async function fetchMetaAdContents(accountId: string): Promise<AdContentResult> {
+  const token = await getMetaToken();
+  if (!token) return { ok: false, error: META_TOKEN_MISSING };
+  const base = `https://graph.facebook.com/${META_API_VERSION}/act_${digits(accountId)}`;
+
+  const adsUrl = new URL(`${base}/ads`);
+  adsUrl.searchParams.set(
+    "fields",
+    "id,name,effective_status,created_time,campaign{id,name,objective}," +
+      "creative{object_type,effective_object_story_id,thumbnail_url,video_id,instagram_permalink_url,object_story_spec}",
+  );
+  adsUrl.searchParams.set("limit", "200");
+  adsUrl.searchParams.set("access_token", token);
+
+  const insightsUrl = new URL(`${base}/insights`);
+  insightsUrl.searchParams.set("level", "ad");
+  insightsUrl.searchParams.set("date_preset", "maximum");
+  insightsUrl.searchParams.set(
+    "fields",
+    "ad_id,impressions,spend,inline_link_clicks,actions,video_thruplay_watched_actions,video_avg_time_watched_actions",
+  );
+  insightsUrl.searchParams.set("limit", "500");
+  insightsUrl.searchParams.set("access_token", token);
+
+  try {
+    const [ads, insights] = await Promise.all([metaPages<MetaAdRow>(adsUrl.toString()), metaPages<MetaAdInsight>(insightsUrl.toString())]);
+    if (!ads.ok) return ads;
+    if (!insights.ok) return insights;
+    const byAd = new Map(insights.rows.map((row) => [row.ad_id, row]));
+    const firstValue = (list?: { value: string }[]) => (list?.length ? Number(list[0]!.value) : null);
+
+    return {
+      ok: true,
+      ads: ads.rows.map((ad) => {
+        const stats = byAd.get(ad.id);
+        const lead = META_LEAD_ACTIONS.map((type) => stats?.actions?.find((a) => a.action_type === type)).find(Boolean);
+        const storyId = ad.creative?.effective_object_story_id ?? null;
+        return {
+          adId: ad.id,
+          adName: ad.name,
+          campaignId: ad.campaign?.id ?? null,
+          campaignName: ad.campaign?.name ?? null,
+          objective: ad.campaign?.objective ?? null,
+          postId: storyId,
+          permalink: postPermalink(storyId) ?? ad.creative?.instagram_permalink_url ?? null,
+          thumbnailUrl: ad.creative?.thumbnail_url ?? null,
+          format: contentFormat(ad.creative),
+          status: contentStatus(ad.effective_status),
+          platformStatus: ad.effective_status,
+          createdAt: ad.created_time ?? null,
+          impressions: Number(stats?.impressions ?? 0),
+          thruplays: firstValue(stats?.video_thruplay_watched_actions) ?? 0,
+          avgPlayTime: firstValue(stats?.video_avg_time_watched_actions),
+          spend: Number(stats?.spend ?? 0),
+          clicks: Number(stats?.inline_link_clicks ?? 0),
+          leads: Number(lead?.value ?? 0),
+        };
+      }),
+    };
+  } catch (error) {
+    return { ok: false, error: `Gagal menghubungi Meta API: ${(error as Error).message}` };
+  }
+}

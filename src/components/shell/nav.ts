@@ -1,6 +1,7 @@
 import {
   AwardIcon,
   BookOpenIcon,
+  ClapperboardIcon,
   ClipboardListIcon,
   GaugeIcon,
   LayoutGridIcon,
@@ -44,6 +45,7 @@ export function buildNav(role: Role, counts: NavCounts, seniorAdvertiser = false
   });
 
   if (can.viewCampaigns(role)) main.push({ title: "Campaigns", href: "/campaigns", icon: MegaphoneIcon });
+  if (can.viewCreatives(role)) main.push({ title: "Creative", href: "/creatives", icon: ClapperboardIcon });
   main.push({ title: "Tasks", href: "/tasks", icon: ListTodoIcon, badge: counts.openTasks || undefined });
 
   if (can.manageTeam(role)) {
@@ -90,6 +92,7 @@ const TITLES: [prefix: string, section: string, page: string][] = [
   ["/reports/", "Daily Reports", "Report Detail"],
   ["/reports", "Daily Reports", "Reports"],
   ["/campaigns", "Campaigns", "All Campaigns"],
+  ["/creatives", "Creative", "Konten Iklan"],
   ["/tasks", "Tasks", "Task Board"],
   ["/team", "Team", "Members"],
   ["/targets", "Team", "KPI Targets"],

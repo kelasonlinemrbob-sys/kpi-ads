@@ -39,6 +39,10 @@ const METRICS: MetricSeed[] = [
   { key: "backlinks", name: "Backlinks Built", role: "seo", unit: "number", aggregation: "sum", weight: 20, defaultTarget: 60, sortOrder: 2, description: "Quality backlinks acquired." },
   { key: "top10_keywords", name: "Keywords in Top 10", role: "seo", unit: "number", aggregation: "last", weight: 30, defaultTarget: 120, sortOrder: 3, description: "Tracked keywords currently ranking on Google page 1." },
   { key: "organic_sessions", name: "Organic Sessions", role: "seo", unit: "number", aggregation: "sum", weight: 25, defaultTarget: 45_000, sortOrder: 4, description: "Sessions from organic search (GA4)." },
+  // Creative
+  { key: "content_produced", name: "Konten Diproduksi", role: "creative", unit: "number", aggregation: "sum", weight: 40, defaultTarget: 60, sortOrder: 1, description: "Video / grafis iklan yang selesai dan diserahkan ke advertiser." },
+  { key: "content_live", name: "Konten Tayang", role: "creative", unit: "number", aggregation: "sum", weight: 25, defaultTarget: 40, sortOrder: 2, description: "Konten yang dipakai di iklan aktif (lihat menu Creative)." },
+  { key: "content_winning", name: "Konten Winning", role: "creative", unit: "number", aggregation: "sum", weight: 35, defaultTarget: 6, sortOrder: 3, description: "Konten yang ditandai Winning oleh advertiser / supervisor." },
 ];
 
 const PEOPLE: {
@@ -60,6 +64,8 @@ const PEOPLE: {
   { name: "Intan Permata", email: "intan@kpi.local", role: "webmaster", title: "Web Developer", factor: 0.82 },
   { name: "Nadia Putri", email: "nadia@kpi.local", role: "seo", title: "SEO Specialist", factor: 1.08 },
   { name: "Yoga Firmansyah", email: "yoga@kpi.local", role: "seo", title: "SEO Content Specialist", factor: 0.66 },
+  { name: "Arga Wicaksono", email: "arga@kpi.local", role: "creative", title: "Video Editor", factor: 1.02 },
+  { name: "Putri Maharani", email: "putri@kpi.local", role: "creative", title: "Graphic Designer", factor: 0.9 },
 ];
 
 // deterministic PRNG so every seed looks the same
@@ -85,6 +91,13 @@ const SUMMARIES: Record<Exclude<Role, "supervisor">, string[]> = {
     "Compressed hero images, mobile PageSpeed up by 6 points.",
     "Set up server-side tracking for Google Ads conversions.",
     "Updated WhatsApp CTA routing across all landing pages.",
+  ],
+  creative: [
+    "Selesai 3 video UGC untuk Serum Brightening, 2 hook berbeda.",
+    "Revisi grafis promo gajian sesuai feedback advertiser.",
+    "Editing 2 video testimoni, render versi 9:16 dan 1:1.",
+    "Desain 4 carousel katalog Skincare Bundle.",
+    "Brainstorm angle baru bersama advertiser, siapkan 5 script.",
   ],
   seo: [
     "Published 2 pillar articles and interlinked 8 older posts.",
@@ -118,6 +131,12 @@ function dailyValues(role: Role, f: number): Record<string, number> {
         backlinks: Math.round(around(2.5 * k, 0.6)),
         top10_keywords: 0, // filled in with a rising trend below
         organic_sessions: Math.round(around(1_750 * k, 0.2)),
+      };
+    case "creative":
+      return {
+        content_produced: Math.round(around(2.4 * k, 0.5)),
+        content_live: Math.round(around(1.6 * k, 0.5)),
+        content_winning: rand() < 0.22 * k ? 1 : 0,
       };
     default:
       return {};
