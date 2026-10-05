@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { dailyReports } from "@/db/schema";
 import { cpr, formatId } from "@/lib/ad-metrics";
 import { requireUser } from "@/lib/auth";
+import { can } from "@/lib/roles";
 import { getReportDayMetrics } from "@/lib/data";
 import { todayISO } from "@/lib/kpi";
 import { getReportRules } from "@/lib/report-rules";
@@ -23,7 +24,7 @@ export const metadata: Metadata = { title: "Catatan Harian" };
 /** The notes advertisers write with each daily ads report, next to that day's spend and results. */
 export default async function DailyNotesPage({ searchParams }: { searchParams: Promise<{ range?: string; q?: string }> }) {
   const user = await requireUser();
-  if (user.role !== "advertiser") redirect("/reports");
+  if (!can.runAds(user.role)) redirect("/reports");
   const sp = await searchParams;
   const today = todayISO();
   const { range, options } = resolveReportRange(sp.range, today);
@@ -107,7 +108,7 @@ export default async function DailyNotesPage({ searchParams }: { searchParams: P
                     <tr key={report.id} className="align-top transition-colors hover:bg-muted/30">
                       <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">{index + 1}</td>
                       <td className="px-3 py-2.5">
-                        <Link href={`/reports/day/${report.date}`} className="font-medium underline-offset-4 hover:underline">
+                        <Link href={`/reports/day/${report.date}?user=${user.id}`} className="font-medium underline-offset-4 hover:underline">
                           {formatLongDateId(report.date)}
                         </Link>
                       </td>

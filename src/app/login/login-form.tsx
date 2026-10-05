@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useState } from "react";
 import { EyeIcon, EyeOffIcon, LoaderIcon, LockIcon, MailIcon } from "lucide-react";
 import { login } from "@/actions/auth";
@@ -42,6 +43,13 @@ export function LoginForm() {
             {show ? <EyeOffIcon className="size-4" /> : <EyeIcon className="size-4" />}
           </button>
         </div>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+        <label className="flex cursor-pointer items-center gap-2">
+          <input type="checkbox" name="remember" className="size-4 accent-primary" />
+          Remember me <span className="text-xs text-muted-foreground">(30 hari)</span>
+        </label>
+        <Link href="/forgot-password" className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">Lupa password?</Link>
       </div>
       {state?.error && (
         <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">

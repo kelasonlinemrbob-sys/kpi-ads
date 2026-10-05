@@ -127,6 +127,41 @@
       "when": 1790734763366,
       "tag": "0017_creative_metrics",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791181717248,
+      "tag": "0018_enhanced_role_targets",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791184732395,
+      "tag": "0019_webmaster_daily_tasks",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791188459676,
+      "tag": "0020_password_reset",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1791189653544,
+      "tag": "0021_automatic_lpv",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1791191978540,
+      "tag": "0022_creative_period_snapshots",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { and, asc, desc, eq, gte, max, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, type SQL } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import {
   CirclePauseIcon,
@@ -14,11 +14,11 @@ import { db } from "@/db";
 import {
   adAccounts,
   adCampaigns,
-  advertiserReportItemCampaigns,
-  advertiserReportItems,
   campaigns,
   users,
 } from "@/db/schema";
+import { fetchCampaignPerformance } from "@/lib/campaign-performance";
+import { CAMPAIGN_PERIODS, campaignPeriod, campaignMoney, emptyCampaignMetrics, totalCampaignMetrics, derivedCampaignMetrics } from "@/lib/campaign-metrics";
 import { matchProduct } from "@/lib/ads-matching";
 import { getMetaConnectionStatus } from "@/lib/meta-connection";
 import { requireUser } from "@/lib/auth";
@@ -45,48 +45,41 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
   const status = sp.status && sp.status in CAMPAIGN_STATUS_LABEL ? (sp.status as keyof typeof CAMPAIGN_STATUS_LABEL) : null;
   const owner = sp.owner === "me" ? user.id : sp.owner ? Number(sp.owner) : null;
   const canEdit = can.editCampaigns(user.role);
-  const monthStart = `${todayISO().slice(0, 7)}-01`;
+  const period = campaignPeriod(sp.period, todayISO());
 
   const where: SQL[] = [];
   if (status) where.push(eq(campaigns.status, status));
   if (owner) where.push(eq(campaigns.ownerId, owner));
 
-  const [productRows, advertisers, allProducts, accountRows, adCampaignRows, performanceRows, metaStatus] = await Promise.all([
+  const [productRows, advertisers, allProducts, accountRows, adCampaignRows, metaStatus] = await Promise.all([
     db
       .select({ campaign: campaigns, ownerName: users.name })
       .from(campaigns)
       .innerJoin(users, eq(users.id, campaigns.ownerId))
       .where(where.length ? and(...where) : undefined)
       .orderBy(asc(campaigns.status), desc(campaigns.updatedAt)),
-    getMembers().then((m) => m.filter((x) => x.role === "advertiser")),
+    getMembers(false, true).then((m) => m.filter((x) => can.runAds(x.role))),
     db
       .select({ campaign: campaigns, ownerName: users.name })
       .from(campaigns)
       .innerJoin(users, eq(users.id, campaigns.ownerId)),
     db.select().from(adAccounts).orderBy(asc(adAccounts.platform), asc(adAccounts.name)),
     db.select().from(adCampaigns).orderBy(asc(adCampaigns.status), asc(adCampaigns.name)),
-    // Month-to-date numbers per platform campaign, from the breakdowns saved with advertiser reports.
-    db
-      .select({
-        platform: advertiserReportItems.platform,
-        externalId: advertiserReportItemCampaigns.externalId,
-        spent: sql<number>`sum(${advertiserReportItemCampaigns.spent})`.mapWith(Number),
-        leads: sql<number>`sum(${advertiserReportItemCampaigns.leads})`.mapWith(Number),
-        clicks: sql<number>`sum(${advertiserReportItemCampaigns.clicks})`.mapWith(Number),
-        lastDate: max(advertiserReportItems.performanceDate),
-      })
-      .from(advertiserReportItemCampaigns)
-      .innerJoin(advertiserReportItems, eq(advertiserReportItems.id, advertiserReportItemCampaigns.itemId))
-      .where(and(eq(advertiserReportItems.window, "previous_day"), gte(advertiserReportItems.performanceDate, monthStart)))
-      .groupBy(advertiserReportItems.platform, advertiserReportItemCampaigns.externalId),
     getMetaConnectionStatus(),
   ]);
 
-  const accountOptions = accountRows.map(({ id, platform, name, accountId }) => ({ id, platform, name, accountId }));
+  const accountOptions = accountRows.map(({ id, platform, name, accountId, lpvConversionAction }) => ({ id, platform, name, accountId, lpvConversionAction }));
   const accountById = new Map(accountRows.map((a) => [a.id, a]));
   const productCount: Record<number, number> = {};
   for (const { campaign: c } of allProducts) if (c.adAccountId) productCount[c.adAccountId] = (productCount[c.adAccountId] ?? 0) + 1;
-  const performance = new Map(performanceRows.map((p) => [`${p.platform}:${p.externalId}`, p]));
+  const accountPerformance = new Map(tab === "ads" ? await Promise.all(accountRows.filter((a) => a.platform === "meta" || a.platform === "google").map(async (a) =>
+    [a.id, await fetchCampaignPerformance({ ...a, platform: a.platform as "meta" | "google" }, period.start, period.end)] as const)) : []);
+  const performance = new Map([...accountPerformance].flatMap(([accountId, result]) => result.ok
+    ? result.campaigns.map((c) => [`${accountId}:${c.id}`, c.metrics] as const) : []));
+  const performanceWarnings = accountRows.flatMap((a) => {
+    const result = accountPerformance.get(a.id);
+    return !result ? [] : result.ok ? result.warnings.map((warning) => `${a.name}: ${warning}`) : [`${a.name}: ${result.error}`];
+  });
 
   // Same keyword matching as "Generate dari Ads", so this page and the daily reports always agree.
   const linkedProducts = allProducts
@@ -100,7 +93,8 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
     );
     if (status && c.status !== status) return [];
     if (owner && product?.ownerId !== owner) return [];
-    const perf = performance.get(`${account.platform}:${c.externalId}`);
+    const result = accountPerformance.get(c.adAccountId);
+    const perf = result?.ok ? performance.get(`${c.adAccountId}:${c.externalId}`) ?? emptyCampaignMetrics(account.platform === "google" ? "google" : "meta", result.currency, result.lpvAvailable) : null;
     return [
       {
         id: c.id,
@@ -109,26 +103,29 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
         accountName: account.name,
         status: c.status,
         platformStatus: c.platformStatus,
+        objective: c.objective,
+        currency: result?.ok ? result.currency : null,
         dailyBudget: c.dailyBudget,
         startDate: c.startDate,
         endDate: c.endDate,
         product: product ? { name: product.product?.trim() || product.name, keyword: product.keyword } : null,
         owner: product ? { name: product.ownerName } : null,
-        performance: perf?.lastDate ? { spent: perf.spent, leads: perf.leads, clicks: perf.clicks, lastDate: perf.lastDate } : null,
+        performance: perf,
       },
     ];
   });
 
   const activeAds = adRows.filter((r) => r.status === "active");
-  const mtdSpent = adRows.reduce((sum, r) => sum + (r.performance?.spent ?? 0), 0);
-  const mtdLeads = adRows.reduce((sum, r) => sum + (r.performance?.leads ?? 0), 0);
+  const totals = derivedCampaignMetrics(totalCampaignMetrics(adRows.map((r) => r.performance)));
+  const budgetCurrencies = new Set(activeAds.map((r) => r.currency));
+  const budgetCurrency = budgetCurrencies.size === 1 ? activeAds[0]?.currency ?? null : null;
   const unmapped = adRows.filter((r) => !r.product && r.status !== "ended").length;
   const syncErrors = accountRows.filter((a) => a.lastSyncError);
   const lastSynced = accountRows.map((a) => a.lastSyncedAt).filter(Boolean).sort((a, b) => b!.getTime() - a!.getTime())[0];
 
-  const products = allProducts.map(({ campaign: c }) => c);
+  const products = productRows.map(({ campaign: c }) => c);
   const activeProducts = products.filter((c) => c.status === "active");
-  const advertiserOptions = user.role === "supervisor" ? advertisers.map((a) => ({ id: a.id, name: a.name })) : null;
+  const advertiserOptions = user.role === "supervisor" ? [...advertisers].sort((a, b) => Number(b.id === user.id) - Number(a.id === user.id)).map((a) => ({ id: a.id, name: a.id === user.id ? `${a.name} (Saya)` : a.name })) : null;
 
   return (
     <>
@@ -154,7 +151,7 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
                 param="owner"
                 label="Owner"
                 value={owner ? String(owner) : "all"}
-                options={[{ value: "all", label: "All advertisers" }, ...advertisers.map((a) => ({ value: String(a.id), label: a.name }))]}
+                options={[{ value: "all", label: "Semua pemilik" }, ...advertisers.map((a) => ({ value: String(a.id), label: a.id === user.id ? `${a.name} (Saya)` : a.name }))]}
               />
             ) : (
               <UrlSelect
@@ -179,34 +176,39 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
               />
             )}
             {canEdit && tab === "ads" && <SyncButton disabled={accountRows.length === 0} />}
-            {canEdit && tab === "products" && <CampaignDialog advertisers={advertiserOptions} adAccounts={accountOptions} />}
+            {canEdit && <CampaignDialog advertisers={advertiserOptions} adAccounts={accountOptions} />}
           </>
         }
       />
 
       <div className="mb-3 inline-flex rounded-lg bg-muted p-1">
-        <TabLink href="/campaigns" active={tab === "ads"}>
-          Campaign Ads <span className="text-xs text-muted-foreground">{adCampaignRows.length}</span>
+        <TabLink href={`/campaigns?period=${period.key}${owner ? `&owner=${owner}` : ""}${status ? `&status=${status}` : ""}`} active={tab === "ads"}>
+          Campaign Ads <span className="text-xs text-muted-foreground">{adRows.length}</span>
         </TabLink>
-        <TabLink href="/campaigns?tab=products" active={tab === "products"}>
+        <TabLink href={`/campaigns?tab=products&period=${period.key}${owner ? `&owner=${owner}` : ""}${status ? `&status=${status}` : ""}`} active={tab === "products"}>
           Product <span className="text-xs text-muted-foreground">{products.length}</span>
         </TabLink>
       </div>
 
       {tab === "ads" ? (
         <>
+          <div className="mb-3 flex flex-wrap items-center gap-3">
+            <UrlSelect param="period" label="Periode metrik" value={period.key} options={CAMPAIGN_PERIODS} />
+            <span className="text-xs text-muted-foreground">{period.start} – {period.end} · Zona waktu akun iklan · Data langsung dari Ads</span>
+          </div>
           <div className="mb-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <MiniStat title="Campaign aktif" icon={CirclePlayIcon} value={String(activeAds.length)} />
             <MiniStat
               title="Budget harian aktif"
               icon={WalletIcon}
-              value={formatRupiah(activeAds.reduce((sum, r) => sum + (r.dailyBudget ?? 0), 0))}
+              value={campaignMoney(activeAds.every((r) => r.dailyBudget !== null) ? activeAds.reduce((sum, r) => sum + r.dailyBudget!, 0) : null, budgetCurrency)}
             />
-            <MiniStat title="Spend bulan ini" icon={CoinsIcon} value={formatRupiah(mtdSpent)} />
-            <MiniStat title="CPR bulan ini" icon={TargetIcon} value={mtdLeads ? formatRupiah(mtdSpent / mtdLeads) : "—"} />
+            <MiniStat title="Spend periode ini" icon={CoinsIcon} value={campaignMoney(totals.spent, totals.currency)} />
+            <MiniStat title="CPLV periode ini" icon={TargetIcon} value={campaignMoney(totals.cplv, totals.currency)} />
           </div>
-          {(unmapped > 0 || syncErrors.length > 0) && (
+          {(unmapped > 0 || syncErrors.length > 0 || performanceWarnings.length > 0) && (
             <div className="mb-3 grid gap-1 text-sm text-muted-foreground">
+              {performanceWarnings.map((warning) => <p key={warning} className="flex gap-2 text-destructive" role="status"><TriangleAlertIcon className="mt-0.5 size-4 shrink-0" /><span>{warning}</span></p>)}
               {syncErrors.map((a) => (
                 <p key={a.id} className="flex gap-2">
                   <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
@@ -233,7 +235,11 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
             }
           />
           <p className="mt-2 text-xs text-muted-foreground">
-            Spend, lead dan CPR bulan ini dihitung dari laporan harian (periode kemarin) yang di-generate dari Ads.
+            Metrik diambil langsung untuk periode terpilih, termasuk campaign yang belum terpetakan ke product. Data hari ini masih berjalan dan mengikuti atribusi platform.
+            Angka 0 berarti tidak ada aktivitas/event yang dilaporkan; — berarti tidak tersedia atau pembagi nol.
+            Reach dan frequency tidak ditotal antar-campaign. Rasio total dihitung dari jumlah metrik, bukan rata-rata rasio.
+            Total tidak ditampilkan jika ada data yang gagal dimuat atau mata uang berbeda; metrik khusus Meta tidak tersedia untuk Google.
+            Purchase/ROAS memerlukan pelacakan event dan nilai pembelian yang benar.
           </p>
         </>
       ) : (

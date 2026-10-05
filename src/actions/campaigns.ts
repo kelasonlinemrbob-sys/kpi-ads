@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
-import { adAccounts, campaigns, campaignStatusEnum, platformEnum } from "@/db/schema";
+import { adAccounts, campaigns, campaignStatusEnum, platformEnum, users } from "@/db/schema";
 import { normalizeKeyword } from "@/lib/ads-matching";
 import { requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
@@ -66,6 +66,9 @@ export async function saveCampaign(_: FormState, formData: FormData): Promise<Fo
   }
   // advertisers always own what they create; supervisors can assign an owner
   const owner = user.role === "supervisor" && ownerId ? ownerId : user.id;
+
+  const [ownerUser] = await db.select({ role: users.role, isActive: users.isActive }).from(users).where(eq(users.id, owner)).limit(1);
+  if (!ownerUser?.isActive || !can.runAds(ownerUser.role)) return { error: "Pemilik product harus advertiser atau supervisor aktif." };
 
   if (id) {
     const { campaign } = await loadEditable(id);
@@ -131,7 +134,7 @@ const quickProductSchema = z.object({
 /** Creates an active product for the current advertiser straight from the report form. */
 export async function createProductFromReport(input: { product: string; platform: string }) {
   const user = await requireUser();
-  if (user.role !== "advertiser") return { error: "Hanya advertiser yang dapat menambah product dari laporan." };
+  if (!can.runAds(user.role)) return { error: "Hanya advertiser yang dapat menambah product dari laporan." };
   const parsed = quickProductSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };
   const { product, platform } = parsed.data;

@@ -25,7 +25,7 @@ export async function login(_: FormState, formData: FormData): Promise<FormState
   if (!user.isActive) return { error: "Your account has been deactivated. Contact your supervisor." };
 
   await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
-  await createSession(user.id, user.sessionVersion);
+  await createSession(user.id, user.sessionVersion, formData.get("remember") === "on");
   redirect("/dashboard");
 }
 

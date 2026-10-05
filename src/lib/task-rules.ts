@@ -120,7 +120,7 @@ export const categoryLabel = (key: string | null) => (key ? (CATEGORY_BY_KEY.get
 /** Kinds of work that fit the assignee's role. */
 export function categoriesFor(assignee: TaskPerson | undefined) {
   if (!assignee) return TASK_CATEGORIES.filter((c) => !c.roles.length);
-  return TASK_CATEGORIES.filter((c) => !c.roles.length || (c.roles.some((r) => hasRole(assignee, r)) && (!c.seniorOnly || isSenior(assignee))));
+  return TASK_CATEGORIES.filter((c) => !c.roles.length || (c.roles.some((r) => hasRole(assignee, r)) && (!c.seniorOnly || assignee.role === "supervisor" || isSenior(assignee))));
 }
 
 export const categoryFits = (key: string, assignee: TaskPerson) => categoriesFor(assignee).some((c) => c.key === key);

@@ -8,6 +8,9 @@ import { db } from "@/db";
 import { advertiserReportItems, dailyReports, kpiEntries, users, waOutbox, waSessions } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { getItemCampaigns, getMetrics } from "@/lib/data";
+import { getSeoDailyTargets } from "@/lib/seo-report-data";
+import { SeoDailyTargets } from "@/components/seo-daily-targets";
+import { WebmasterReportDetail } from "@/components/webmaster-report-detail";
 import { aggregate, todayISO, type Entry } from "@/lib/kpi";
 import { memberRoles, needsReview } from "@/lib/member-roles";
 import { getReportRules } from "@/lib/report-rules";
@@ -57,13 +60,16 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
   const numberRoles = roles.filter((r) => r !== "advertiser" || advertiserItems.length === 0);
   const byKey = new Map(metrics.map((m) => [m.key, m]));
   const asEntries: Entry[] = entries.map((e) => ({ userId: e.userId, metricId: e.metricId, date: e.date, value: e.value }));
+  const reportedMetrics = metrics.filter((m) => m.role !== "webmaster" || m.key !== "task_completion" && asEntries.some((e) => e.metricId === m.id));
+  const seoTargets = roles.includes("seo") ? await getSeoDailyTargets(member.id, report.date) : [];
+  const seoValues = Object.fromEntries(metrics.filter((m) => m.role === "seo").map((m) => [m.key, aggregate(m, asEntries, byKey)]));
   const requiresReview = needsReview(member);
   const rules = await getReportRules();
   const canEdit = user.id === report.userId && (!requiresReview || report.status !== "approved") && report.date >= addDays(todayISO(), -rules.backfillDays);
 
   return (
     <>
-      <Link href="/reports" className="mb-3 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+      <Link href={user.role === "supervisor" && report.userId === user.id ? "/reports?view=mine" : "/reports"} className="mb-3 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
         <ArrowLeftIcon className="size-4" /> Back to reports
       </Link>
       <PageHeader
@@ -100,6 +106,7 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
 
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="grid min-w-0 content-start gap-3">
+          {(roles.includes("webmaster") || report.webmasterTasks.length > 0) && <WebmasterReportDetail items={report.webmasterTasks} />}
           {roles.includes("advertiser") && advertiserItems.length > 0 && (
             <AdvertiserReportDetail
               reportDate={report.date}
@@ -107,15 +114,15 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
               items={advertiserItems.map((item) => ({ ...item, campaigns: itemCampaigns.get(item.id) ?? [] }))}
             />
           )}
-          {numberRoles.map((role) => (
+          {numberRoles.filter((role) => reportedMetrics.some((m) => m.role === role)).map((role) => (
             <Panel
               key={role}
-              title={roles.length > 1 ? `Angka KPI ${ROLE_LABEL[role]}` : "Reported Numbers"}
+              title={role === "webmaster" ? "Metrik Teknis Tambahan" : roles.length > 1 ? `Angka KPI ${ROLE_LABEL[role]}` : "Reported Numbers"}
               icon={CalculatorIcon}
               iconPosition="left"
             >
               <dl className="grid grid-cols-2 divide-x divide-y sm:grid-cols-3 [&>div]:border-border">
-                {metrics
+                {reportedMetrics
                   .filter((m) => m.role === role)
                   .map((m) => {
                     const v = aggregate(m, asEntries, byKey);
@@ -146,6 +153,7 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
         </div>
 
         <div className="grid content-start gap-3">
+          {roles.includes("seo") && <SeoDailyTargets targets={seoTargets} values={seoValues} />}
           <Panel title="Member">
             <div className="flex items-center gap-3 p-4">
               <UserAvatar name={member.name} className="size-11" />

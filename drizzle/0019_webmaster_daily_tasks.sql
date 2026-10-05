@@ -1,0 +1,1 @@
+ALTER TABLE "daily_reports" ADD COLUMN "webmaster_tasks" jsonb DEFAULT '[]'::jsonb NOT NULL;

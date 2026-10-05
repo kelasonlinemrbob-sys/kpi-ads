@@ -1,7 +1,8 @@
 import "server-only";
 import { and, desc, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
-import { adAccounts, adCreatives, campaigns, users, type AdCreative, type Role } from "@/db/schema";
+import { adAccounts, adCreatives, creativeMetrics, creativeSyncs, campaigns, users, type AdCreative, type Role } from "@/db/schema";
+import { creativePeriod, type CreativePeriodKey } from "./creative-period";
 import { matchProduct } from "@/lib/ads-matching";
 import {
   CREATIVE_FORMAT_LABEL,
@@ -56,18 +57,21 @@ export type CreativeFilters = {
   label?: NonNullable<AdCreative["label"]> | "none" | null;
   creator?: number | null;
   q?: string | null;
-  /** Only ads created in the last N days, or "month" for the running month. */
-  created?: "7d" | "30d" | "90d" | "month" | null;
+  period?: CreativePeriodKey;
   sort?: "impressions" | "thruplays" | "newest" | "playtime" | "spend" | "ctr" | "hook" | "cpl";
 };
 
 export async function getCreativeRows(filters: CreativeFilters = {}): Promise<CreativeRow[]> {
+  const period = creativePeriod(filters.period);
   const [rows, products] = await Promise.all([
     db
-      .select({ c: adCreatives, accountName: adAccounts.name })
+      .select({ c: adCreatives, m: creativeMetrics, syncedAt: creativeSyncs.syncedAt, accountName: adAccounts.name })
       .from(adCreatives)
       .innerJoin(adAccounts, eq(adAccounts.id, adCreatives.adAccountId))
-      .orderBy(desc(adCreatives.impressions)),
+      .innerJoin(creativeMetrics, eq(creativeMetrics.creativeId, adCreatives.id))
+      .innerJoin(creativeSyncs, and(eq(creativeSyncs.id, creativeMetrics.syncId), eq(creativeSyncs.adAccountId, adCreatives.adAccountId)))
+      .where(and(eq(creativeSyncs.periodStart, period.start), eq(creativeSyncs.periodEnd, period.end)))
+      .orderBy(desc(creativeMetrics.impressions)),
     db
       .select({
         adAccountId: campaigns.adAccountId,
@@ -84,7 +88,7 @@ export async function getCreativeRows(filters: CreativeFilters = {}): Promise<Cr
   const linked = products.filter((p) => p.keyword?.trim()).map((p) => ({ ...p, keyword: p.keyword! }));
   const q = filters.q?.trim().toLowerCase();
 
-  const all: CreativeRow[] = rows.map(({ c, accountName }) => {
+  const all: CreativeRow[] = rows.map(({ c, m, syncedAt, accountName }) => {
     // Same product-code matching as "Generate dari Ads": the code in the campaign name picks the product.
     const product = c.campaignName ? matchProduct(c.campaignName, linked.filter((p) => p.adAccountId === c.adAccountId)) : null;
     return {
@@ -103,26 +107,24 @@ export async function getCreativeRows(filters: CreativeFilters = {}): Promise<Cr
       formatOverridden: c.formatOverride !== null,
       creatorId: c.creatorId,
       editorId: c.editorId,
-      impressions: c.impressions,
-      reach: c.reach,
-      videoViews: c.videoViews,
-      avgPlayTime: c.avgPlayTime,
-      thruplays: c.thruplays,
-      spend: c.spend,
-      clicks: c.clicks,
-      leads: c.leads,
+      impressions: m.impressions,
+      reach: m.reach,
+      videoViews: m.videoViews,
+      avgPlayTime: m.avgPlayTime,
+      thruplays: m.thruplays,
+      spend: m.spend,
+      clicks: m.clicks,
+      leads: m.leads,
       postId: c.postId,
       advertiser: product ? { id: product.ownerId, name: product.ownerName } : null,
       product: product ? product.product?.trim() || product.name : null,
       adCreatedAt: c.adCreatedAt?.toISOString() ?? null,
-      syncedAt: c.syncedAt.toISOString(),
+      syncedAt: syncedAt.toISOString(),
     };
   });
 
-  const createdFrom = createdSince(filters.created ?? null);
   const filtered = all.filter(
     (r) =>
-      (!createdFrom || (r.adCreatedAt !== null && r.adCreatedAt >= createdFrom)) &&
       (!filters.advertiser || r.advertiser?.id === filters.advertiser) &&
       (!filters.product || r.product === filters.product) &&
       (!filters.status || r.status === filters.status) &&
@@ -162,14 +164,6 @@ export function sortValue(r: CreativeNumbers & { adCreatedAt: string | null }, s
 
 export function sortCreatives<T extends CreativeNumbers & { adCreatedAt: string | null }>(rows: T[], sort: SortKey) {
   return [...rows].sort((a, b) => sortValue(b, sort) - sortValue(a, sort));
-}
-
-function createdSince(created: CreativeFilters["created"]) {
-  if (!created) return null;
-  const now = new Date();
-  if (created === "month") return new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-  const days = { "7d": 7, "30d": 30, "90d": 90 }[created];
-  return new Date(now.getTime() - days * 86_400_000).toISOString();
 }
 
 /** A content (post) with every ad that runs it, numbers summed. */
@@ -243,7 +237,7 @@ export async function getCreativeTeam() {
 }
 
 /** The spreadsheet the creative team keeps, one line per ad (CSV, same column order). */
-export function creativesCsv(rows: CreativeRow[], people: Map<number, string>) {
+export function creativesCsv(rows: CreativeRow[], people: Map<number, string>, period = creativePeriod()) {
   const header = [
     "ADVERTISER",
     "PRODUK",
@@ -269,6 +263,8 @@ export function creativesCsv(rows: CreativeRow[], people: Map<number, string>) {
     "HOOK RATE %",
     "HOLD RATE %",
     "CPL",
+    "PERIODE MULAI",
+    "PERIODE AKHIR",
   ];
   const dec = (v: number | null) => (v === null ? "" : v.toFixed(2));
   const csv = (v: string | number) => {
@@ -296,6 +292,7 @@ export function creativesCsv(rows: CreativeRow[], people: Map<number, string>) {
     r.reach,
     r.format === "video" ? r.videoViews : "",
     ...((rates) => [dec(rates.ctr), dec(rates.cpm), dec(rates.hook), dec(rates.hold), dec(rates.cpl)])(creativeRates(sumCreatives([r]))),
+    period.start, period.end,
   ]);
   return "﻿" + [header, ...lines].map((line) => line.map(csv).join(",")).join("\n");
 }
@@ -304,7 +301,6 @@ const STATUSES = ["active", "paused", "review", "takedown"] as const;
 const FORMATS = ["video", "grafis", "carousel", "lainnya"] as const;
 const LABELS = ["winning", "good", "average", "poor", "none"] as const;
 const SORTS = ["impressions", "thruplays", "newest", "playtime", "spend", "ctr", "hook", "cpl"] as const;
-const CREATED = ["7d", "30d", "90d", "month"] as const;
 const pick = <T extends string>(list: readonly T[], value: string | undefined) => (list.find((v) => v === value) ?? null) as T | null;
 
 /** Filters from the page's search params (also used by the CSV export, so both show the same rows). */
@@ -318,7 +314,7 @@ export function parseCreativeFilters(sp: Record<string, string | undefined>, me:
     label: pick(LABELS, sp.label),
     creator: id(sp.creator),
     q: sp.q || null,
-    created: pick(CREATED, sp.created),
+    period: creativePeriod(sp.period).key,
     sort: pick(SORTS, sp.sort) ?? "impressions",
   };
 }

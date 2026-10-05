@@ -9,7 +9,7 @@ export function HashToTab() {
   const params = useSearchParams();
   React.useEffect(() => {
     const hash = window.location.hash;
-    if (!params.get("tab") && (hash === "#whatsapp" || hash === "#meta-ads")) router.replace(`/settings?tab=integrasi${hash}`);
+    if (!params.get("tab") && (hash === "#whatsapp" || hash === "#meta-ads" || hash === "#google-ads")) router.replace(`/settings?tab=integrasi${hash}`);
   }, [params, router]);
   return null;
 }

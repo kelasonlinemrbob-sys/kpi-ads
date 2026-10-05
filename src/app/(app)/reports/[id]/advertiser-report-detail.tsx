@@ -55,10 +55,12 @@ function WindowPanel({
       impressions: total.impressions + row.impressions,
       clicks: total.clicks + row.clicks,
       leads: total.leads + row.leads,
+      landingPageViews: total.landingPageViews + (row.landingPageViews ?? 0),
     }),
-    { spent: 0, impressions: 0, clicks: 0, leads: 0 },
+    { spent: 0, impressions: 0, clicks: 0, leads: 0, landingPageViews: 0 },
   );
 
+  const completeLpv = rows.length > 0 && rows.every((r) => r.landingPageViews !== null);
   return (
     <Panel
       title={title}
@@ -80,12 +82,14 @@ function WindowPanel({
               <TableHead className="text-right">Impression</TableHead>
               <TableHead className="text-right">Click</TableHead>
               <TableHead className="text-right">Result lead</TableHead>
+              <TableHead className="text-right">LPV</TableHead>
+              <TableHead className="text-right">CPLV</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.length === 0 && (
               <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={6} className="py-6 text-center text-muted-foreground">
+                <TableCell colSpan={8} className="py-6 text-center text-muted-foreground">
                   Periode ini belum dilaporkan.
                 </TableCell>
               </TableRow>
@@ -101,6 +105,8 @@ function WindowPanel({
               <TableCell className="text-right font-medium tabular-nums">{formatNumber(totals.impressions)}</TableCell>
               <TableCell className="text-right font-medium tabular-nums">{formatNumber(totals.clicks)}</TableCell>
               <TableCell className="text-right font-medium tabular-nums">{formatNumber(totals.leads)}</TableCell>
+              <TableCell className="text-right font-medium tabular-nums">{completeLpv ? formatNumber(totals.landingPageViews) : "—"}</TableCell>
+              <TableCell className="text-right font-medium tabular-nums">{completeLpv && totals.landingPageViews > 0 ? formatRupiah(totals.spent / totals.landingPageViews) : "—"}</TableCell>
             </TableRow>
           </TableBody>
         </Table>

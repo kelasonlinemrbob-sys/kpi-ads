@@ -12,11 +12,12 @@ const csv = (v: unknown) => {
 export async function GET(req: Request) {
   const user = await getCurrentUser();
   if (!user) return new Response("Unauthorized", { status: 401 });
-  const p = new URL(req.url).searchParams.get("period") ?? "";
+  const params = new URL(req.url).searchParams;
+  const p = params.get("period") ?? "";
   const period = isPeriod(p) ? p : currentPeriod();
 
   const members =
-    user.role === "supervisor"
+    user.role === "supervisor" && params.get("scope") !== "mine"
       ? await getMembers()
       : [
           {

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { CheckCircle2Icon, LoaderIcon, PlusIcon, SparklesIcon, Trash2Icon, TriangleAlertIcon } from "lucide-react";
 import { toast } from "sonner";
 import type { Campaign } from "@/db/schema";
+import { generatedMetricStrings as toStrings } from "@/lib/ads-lpv";
 import { generateAdsReport } from "@/actions/ads-sync";
 import { createProductFromReport } from "@/actions/campaigns";
 import { saveReport } from "@/actions/reports";
@@ -32,6 +33,7 @@ export type AdvertiserCampaignOption = {
 };
 
 export type CampaignBreakdown = {
+  landingPageViews?: number | null;
   id: string;
   name: string;
   spent: number;
@@ -41,6 +43,7 @@ export type CampaignBreakdown = {
 };
 
 export type AdvertiserReportItemValue = {
+  landingPageViews: number | null;
   id: number;
   campaignId: number;
   performanceDate: string;
@@ -53,6 +56,7 @@ export type AdvertiserReportItemValue = {
 };
 
 type FormRow = {
+  landingPageViews: string;
   key: string;
   campaignId: string;
   /** Performance date of the period the row belongs to. */
@@ -86,10 +90,11 @@ function emptyRow(period: string, key: string, campaign?: AdvertiserCampaignOpti
     impressions: "",
     clicks: "",
     leads: "",
+    landingPageViews: "",
   };
 }
 
-const isBlank = (row: FormRow) => METRIC_FIELDS.every((field) => row[field] === "");
+const isBlank = (row: FormRow) => METRIC_FIELDS.every((field) => row[field] === "") && row.landingPageViews === "";
 const isComplete = (row: FormRow) => Boolean(row.campaignId) && METRIC_FIELDS.every((field) => row[field] !== "");
 
 export function AdvertiserReportForm({
@@ -123,6 +128,7 @@ export function AdvertiserReportForm({
   const [generating, startGenerating] = React.useTransition();
   const [issues, setIssues] = React.useState<{
     errors: { account: string; error: string }[];
+    warnings: { account: string; message: string }[];
     unmapped: { account: string; spent: number; campaigns: { name: string; spent: number }[] }[];
   } | null>(null);
   const nextKey = React.useRef(2);
@@ -149,6 +155,7 @@ export function AdvertiserReportForm({
         impressions: String(item.impressions),
         clicks: String(item.clicks),
         leads: String(item.leads),
+        landingPageViews: item.landingPageViews === null ? "" : String(item.landingPageViews),
         ...(item.campaigns.length ? { fromApi: true, campaigns: item.campaigns } : {}),
       }));
     }),
@@ -156,7 +163,7 @@ export function AdvertiserReportForm({
   const activeRows = rows.filter((row) => row.period === activePeriod);
 
   const setRow = (key: string, patch: Partial<FormRow>) => {
-    const touchesMetrics = METRIC_FIELDS.some((field) => field in patch);
+    const touchesMetrics = METRIC_FIELDS.some((field) => field in patch) || "landingPageViews" in patch || "campaignId" in patch;
     setRows((current) =>
       current.map((row) => (row.key === key ? { ...row, ...patch, ...(touchesMetrics ? { fromApi: false, campaigns: undefined } : {}) } : row)),
     );
@@ -184,7 +191,7 @@ export function AdvertiserReportForm({
         toast.error(result.error);
         return;
       }
-      setIssues({ errors: result.errors, unmapped: result.unmapped });
+      setIssues({ errors: result.errors, unmapped: result.unmapped, warnings: result.warnings });
       setRows((current) => {
         const generated = new Map(result.rows.map((row) => [String(row.campaignId), row]));
         // Update rows that already exist for the product, drop untouched blank rows, append the rest.
@@ -231,6 +238,7 @@ export function AdvertiserReportForm({
     impressions: Number(row.impressions),
     clicks: Number(row.clicks),
     leads: Number(row.leads),
+    landingPageViews: row.landingPageViews === "" ? null : Number(row.landingPageViews),
   }));
 
   const totals = activeRows.reduce(
@@ -239,10 +247,12 @@ export function AdvertiserReportForm({
       impressions: total.impressions + (Number(row.impressions) || 0),
       clicks: total.clicks + (Number(row.clicks) || 0),
       leads: total.leads + (Number(row.leads) || 0),
+      landingPageViews: total.landingPageViews + (Number(row.landingPageViews) || 0),
     }),
-    { spent: 0, impressions: 0, clicks: 0, leads: 0 },
+    { spent: 0, impressions: 0, clicks: 0, leads: 0, landingPageViews: 0 },
   );
 
+  const totalCplv = activeRows.every((r) => r.landingPageViews !== "") ? costPerResult(totals.spent, totals.landingPageViews) : null;
   const totalCpr = costPerResult(totals.spent, totals.leads);
 
   return (
@@ -333,10 +343,14 @@ export function AdvertiserReportForm({
             <TotalCell label="Click">{formatId(totals.clicks)}</TotalCell>
             <TotalCell label="Lead">{formatId(totals.leads)}</TotalCell>
             <TotalCell label="CPR">{totalCpr === null ? "—" : formatId(totalCpr)}</TotalCell>
+            <TotalCell label="LPV">{activeRows.every((r) => r.landingPageViews !== "") ? formatId(totals.landingPageViews) : "—"}</TotalCell>
+            <TotalCell label="CPLV">{totalCplv === null ? "—" : formatId(totalCplv)}</TotalCell>
           </>
         }
       />
 
+      {issues?.warnings.map((warning) => <p key={warning.account + warning.message} role="status" className="text-sm text-warning">{warning.account}: {warning.message}</p>)}
+      <p className="text-xs text-muted-foreground">LPV diisi otomatis saat Generate dari Ads: Meta dari Landing Page Views; Google dari konversi LPV yang dipilih di Akun iklan. Angka tetap bisa dikoreksi manual. Kosong berarti belum tersedia. CPLV = total spend ÷ total LPV, jika seluruh product memiliki data LPV dan totalnya lebih dari 0.</p>
       {issues && (issues.errors.length > 0 || issues.unmapped.length > 0) && (
         <div className="grid gap-2 text-sm text-muted-foreground">
           {issues.errors.map((item) => (
@@ -495,16 +509,7 @@ function NewProductDialog({
   );
 }
 
-function toStrings(metrics: { spent: number; impressions: number; clicks: number; leads: number }) {
-  return {
-    spent: String(metrics.spent),
-    impressions: String(metrics.impressions),
-    clicks: String(metrics.clicks),
-    leads: String(metrics.leads),
-  };
-}
-
-const ROW_GRID = "lg:grid-cols-[minmax(220px,1.8fr)_repeat(4,minmax(90px,1fr))_minmax(90px,1fr)_32px]";
+const ROW_GRID = "lg:grid-cols-[minmax(180px,1.8fr)_repeat(7,minmax(70px,1fr))_32px]";
 
 function ReportTable({
   window,
@@ -537,6 +542,8 @@ function ReportTable({
         <span className="text-right">Click</span>
         <span className="text-right">Lead</span>
         <span className="text-right">CPR (Rp)</span>
+        <span className="text-right">LPV</span>
+        <span className="text-right">CPLV (Rp)</span>
         <span />
       </div>
 
@@ -595,6 +602,10 @@ function ReportTable({
                 </span>
               </CompactField>
 
+              <NumberField label="LPV (otomatis atau manual, opsional)" value={row.landingPageViews} disabled={locked} required={false} onChange={(landingPageViews) => onChange(row.key, { landingPageViews })} />
+              <CompactField label="CPLV (Rp)">
+                <span className="flex h-8 items-center text-sm tabular-nums text-muted-foreground lg:justify-end">{Number(row.landingPageViews) > 0 ? formatId(Number(row.spent) / Number(row.landingPageViews)) : "—"}</span>
+              </CompactField>
               <Button
                 type="button"
                 variant="ghost"
@@ -655,6 +666,7 @@ function CompactField({
 }
 
 function NumberField({
+  required = true,
   label,
   value,
   disabled,
@@ -664,6 +676,7 @@ function NumberField({
   value: string;
   disabled: boolean;
   onChange: (value: string) => void;
+  required?: boolean;
 }) {
   return (
     <CompactField label={label}>
@@ -679,7 +692,7 @@ function NumberField({
         }}
         disabled={disabled}
         className="text-right tabular-nums"
-        required
+        required={required}
       />
     </CompactField>
   );

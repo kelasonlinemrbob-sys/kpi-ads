@@ -41,7 +41,7 @@ export function CreativeReport({
         <Tile icon={ClapperboardIcon} label="Konten" value={fmt.num(posts.length)} hint={`${fmt.num(rows.length)} iklan · ${fmt.num(active)} aktif`} />
         <Tile icon={TrophyIcon} label="Winning" value={fmt.num(winning)} hint={posts.length ? `${fmt.pct((winning / posts.length) * 100)} dari konten` : "–"} />
         <Tile icon={CoinsIcon} label="Spend" value={fmt.rpCompact(total.spend)} hint={`CPM ${fmt.rp(rates.cpm)}`} />
-        <Tile icon={EyeIcon} label="Impression" value={fmt.compact(total.impressions)} hint={`Reach ${fmt.compact(total.reach)}`} />
+        <Tile icon={EyeIcon} label="Impression" value={fmt.compact(total.impressions)} hint={`Jumlah reach iklan ${fmt.compact(total.reach)}`} />
         <Tile icon={MousePointerClickIcon} label="CTR" value={fmt.pct(rates.ctr)} hint={`${fmt.num(total.clicks)} klik link`} />
         <Tile icon={TargetIcon} label="CPL" value={fmt.rp(rates.cpl)} hint={`${fmt.num(total.leads)} lead`} />
       </div>

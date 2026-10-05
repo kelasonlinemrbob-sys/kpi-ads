@@ -1,5 +1,6 @@
 import "server-only";
 import { cache } from "react";
+import { sessionPolicy } from "./session-policy";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { SignJWT, jwtVerify } from "jose";
@@ -8,7 +9,7 @@ import { db } from "@/db";
 import { users, type Role, type User } from "@/db/schema";
 
 export const SESSION_COOKIE = "kpi_session";
-const SESSION_DAYS = 7;
+
 
 function secret() {
   const s = process.env.AUTH_SECRET;
@@ -16,19 +17,31 @@ function secret() {
   return new TextEncoder().encode(s);
 }
 
-export async function createSession(userId: number, sessionVersion = 0) {
-  const token = await new SignJWT({ uid: userId, sv: sessionVersion })
+export async function createSession(userId: number, sessionVersion = 0, remember?: boolean) {
+  const store = await cookies();
+  // Settings actions preserve the signed-in device's original choice.
+  if (remember === undefined) {
+    remember = false;
+    const previous = store.get(SESSION_COOKIE)?.value;
+    if (previous) {
+      try {
+        const { payload } = await jwtVerify(previous, secret());
+        remember = payload.uid === userId && payload.remember === true;
+      } catch { /* Invalid sessions do not become persistent. */ }
+    }
+  }
+  const policy = sessionPolicy(remember);
+  const token = await new SignJWT({ uid: userId, sv: sessionVersion, remember })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime(`${SESSION_DAYS}d`)
+    .setExpirationTime(policy.expiresIn)
     .sign(secret());
-  const store = await cookies();
   store.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: SESSION_DAYS * 24 * 60 * 60,
+    ...policy.cookie,
   });
 }
 

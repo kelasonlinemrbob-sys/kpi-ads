@@ -1,0 +1,23 @@
+[Unit]
+Description=KPI Ads WhatsApp worker
+After=network.target postgresql.service kpiads.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=kpiads
+Group=kpiads
+WorkingDirectory=/srv/kpiads/current
+ExecStart=/usr/local/bin/node --env-file=/srv/kpiads/shared/.env --import tsx src/wa/worker.mts
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/kpiads
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

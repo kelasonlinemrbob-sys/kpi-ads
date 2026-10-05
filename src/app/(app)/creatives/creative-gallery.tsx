@@ -140,7 +140,7 @@ function CreativeDetail({ post, people, onClose }: { post: CreativePost; people:
 
   const stats: [string, string][] = [
     ["Impression", fmt.num(totals.impressions)],
-    ["Reach", fmt.num(totals.reach)],
+    ["Jumlah reach iklan", fmt.num(totals.reach)],
     ["Spend", fmt.rp(totals.spend)],
     ["CPM", fmt.rp(rates.cpm)],
     ["Klik link", fmt.num(totals.clicks)],

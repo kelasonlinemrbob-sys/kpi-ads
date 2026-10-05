@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
+    "test:kpi": "TZ=Asia/Jakarta tsx --test src/lib/kpi.test.ts src/lib/seo-report.test.ts src/lib/webmaster-report.test.ts src/lib/supervisor-ads.test.ts src/lib/auth-security.test.ts src/lib/ads-lpv.test.ts",
+    "test:webmaster:integration": "TZ=Asia/Jakarta node --env-file=.env --conditions=react-server --import tsx --test src/lib/webmaster-report.integration.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
@@ -14,7 +16,11 @@
     "db:seed": "tsx --env-file=.env src/db/seed.ts",
     "db:create-supervisor": "tsx --env-file=.env src/db/create-supervisor.ts",
     "db:seed-ads-demo": "tsx --env-file=.env src/db/seed-ads-demo.ts",
-    "wa:worker": "tsx --env-file=.env src/wa/worker.mts"
+    "wa:worker": "tsx --env-file=.env src/wa/worker.mts",
+    "test:auth:integration": "TZ=Asia/Jakarta node --env-file=.env --conditions=react-server --import tsx --test src/lib/password-reset.integration.test.ts",
+    "test:ads": "node --conditions=react-server --import tsx --test src/lib/ads-api.test.ts src/lib/campaign-metrics.test.ts src/lib/campaign-performance.test.ts src/lib/google-client.test.ts src/lib/meta-creatives-api.test.ts",
+    "test:google:integration": "node --env-file=.env --conditions=react-server --import tsx --test src/lib/google-connection.integration.test.ts",
+    "test:creative:integration": "node --env-file=.env --conditions=react-server --import tsx --test src/lib/creative-sync.integration.test.ts"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.10",
@@ -34,6 +40,7 @@
     "jose": "^6.0.11",
     "lucide-react": "^1.48.0",
     "next": "16.3.6",
+    "nodemailer": "^10.0.14",
     "pg": "^8.16.3",
     "pino": "^10.3.1",
     "qrcode": "^1.5.4",
@@ -47,6 +54,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/nodemailer": "^8.0.2",
     "@types/pg": "^8.15.4",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19",

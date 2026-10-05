@@ -5,10 +5,11 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
 import { adAccounts, adCampaigns } from "@/db/schema";
-import { fetchAccountCampaignList } from "@/lib/ads-api";
+import { fetchAccountCampaignList, fetchGoogleConversionActions } from "@/lib/ads-api";
 import { checkMetaAdAccount } from "@/lib/meta-connection";
 import { logActivity } from "@/lib/data";
 import { requireUser } from "@/lib/auth";
+import { validGoogleConversionResource } from "@/lib/ads-lpv";
 import { can } from "@/lib/roles";
 import type { FormState } from "./auth";
 
@@ -135,4 +136,33 @@ export async function syncAdCampaigns() {
     synced: synced.reduce((sum, r) => sum + r.count, 0),
     failed: failed.map((r) => ({ account: r.account.name, error: r.error! })),
   };
+}
+
+
+async function editableGoogleAccount(id: number) {
+  const user = await requireUser();
+  if (!can.editCampaigns(user.role)) return null;
+  const [account] = await db.select().from(adAccounts).where(eq(adAccounts.id, id)).limit(1);
+  return account?.platform === "google" && (user.role === "supervisor" || account.createdById === user.id) ? account : null;
+}
+
+export async function getLpvConversionOptions(id: number) {
+  const account = await editableGoogleAccount(id);
+  if (!account) return { ok: false as const, error: "Tidak punya akses mengatur akun ini." };
+  return fetchGoogleConversionActions(account.accountId);
+}
+
+export async function saveLpvConversion(id: number, resource: string) {
+  const account = await editableGoogleAccount(id);
+  if (!account) return { error: "Tidak punya akses mengatur akun ini." };
+  if (resource) {
+    if (!validGoogleConversionResource(resource)) return { error: "Konversi LPV tidak valid." };
+    const options = await fetchGoogleConversionActions(account.accountId);
+    if (!options.ok) return { error: options.error };
+    if (!options.actions.some((a) => a.resourceName === resource)) return { error: "Konversi tidak aktif atau bukan milik akun ini." };
+  }
+  await db.update(adAccounts).set({ lpvConversionAction: resource || null }).where(eq(adAccounts.id, id));
+  revalidatePath("/campaigns");
+  revalidatePath("/reports/new");
+  return { ok: true };
 }

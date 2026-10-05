@@ -186,7 +186,7 @@ export async function AdvertiserReports({
               </thead>
               <tbody>
                 {visible.map((day) => (
-                  <DayItem key={day.date} day={day} />
+                  <DayItem key={day.date} day={day} userId={userId} />
                 ))}
               </tbody>
               <tfoot className="bg-muted/40 font-medium">
@@ -215,7 +215,7 @@ export async function AdvertiserReports({
   );
 }
 
-function DayItem({ day }: { day: DayRow }) {
+function DayItem({ day, userId }: { day: DayRow; userId: number }) {
   const m = day.metrics;
   const firstMissing = day.periods.find((p) => !p.saved);
   const action =
@@ -230,7 +230,7 @@ function DayItem({ day }: { day: DayRow }) {
     <tr className={cn("transition-colors hover:bg-muted/30", !day.reportId && "bg-muted/20")}>
       <td className="px-3 py-2">
         {day.reportId ? (
-          <Link href={`/reports/day/${day.date}`} className="font-medium underline-offset-4 hover:underline">
+          <Link href={`/reports/day/${day.date}?user=${userId}`} className="font-medium underline-offset-4 hover:underline">
             {dateLabel}
           </Link>
         ) : (
@@ -277,7 +277,7 @@ function DayItem({ day }: { day: DayRow }) {
           </Button>
         ) : day.reportId ? (
           <Link
-            href={`/reports/day/${day.date}`}
+            href={`/reports/day/${day.date}?user=${userId}`}
             className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
             title={day.summary ?? undefined}
           >

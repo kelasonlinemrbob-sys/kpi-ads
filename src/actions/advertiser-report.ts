@@ -26,6 +26,7 @@ import type { FormState } from "./auth";
 
 
 const breakdownSchema = z.object({
+  landingPageViews: z.number().int().min(0).nullable().optional(),
   id: z.string().trim().min(1).max(64),
   name: z.string().trim().min(1).max(255),
   spent: z.coerce.number().finite().min(0),
@@ -35,6 +36,7 @@ const breakdownSchema = z.object({
 });
 
 const itemSchema = z.object({
+  landingPageViews: z.number().int().min(0).nullable().optional(),
   campaignId: z.coerce.number().int().positive(),
   performanceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Periode laporan tidak valid."),
   platform: z.enum(platformEnum.enumValues),
@@ -57,7 +59,9 @@ function consistentBreakdown(item: ItemInput) {
     Math.round(sum("spent")) === Math.round(item.spent) &&
     sum("impressions") === item.impressions &&
     sum("clicks") === item.clicks &&
-    sum("leads") === item.leads;
+    sum("leads") === item.leads &&
+    (item.landingPageViews == null || list.every((c) => c.landingPageViews == null) ||
+      (list.every((c) => c.landingPageViews != null) && list.reduce((n, c) => n + c.landingPageViews!, 0) === item.landingPageViews));
   return matches ? list : [];
 }
 
@@ -126,7 +130,7 @@ export async function saveAdvertiserReport(user: SessionUser, formData: FormData
   const metrics = await db
     .select()
     .from(kpiMetrics)
-    .where(and(eq(kpiMetrics.role, "advertiser"), inArray(kpiMetrics.key, ["ad_spend", "leads"])));
+    .where(and(eq(kpiMetrics.role, "advertiser"), inArray(kpiMetrics.key, ["ad_spend", "leads", "landing_page_views"])));
 
   const dualRole = hasSecondRole(user);
   const advertiserMetricIds = (await db.select({ id: kpiMetrics.id }).from(kpiMetrics).where(eq(kpiMetrics.role, "advertiser"))).map((m) => m.id);
@@ -185,6 +189,7 @@ export async function saveAdvertiserReport(user: SessionUser, formData: FormData
             impressions: item.impressions,
             clicks: item.clicks,
             leads: item.leads,
+            landingPageViews: item.landingPageViews ?? null,
           };
         }),
       )
@@ -205,13 +210,14 @@ export async function saveAdvertiserReport(user: SessionUser, formData: FormData
         impressions: c.impressions,
         clicks: c.clicks,
         leads: c.leads,
+        landingPageViews: c.landingPageViews ?? null,
       }));
     });
     if (breakdown.length) await tx.insert(advertiserReportItemCampaigns).values(breakdown);
 
     // KPI counts full days only, i.e. every "previous_day" period (Friday–Sunday on a Monday report).
     const previousRows = await tx
-      .select({ spent: advertiserReportItems.spent, leads: advertiserReportItems.leads })
+      .select({ spent: advertiserReportItems.spent, leads: advertiserReportItems.leads, landingPageViews: advertiserReportItems.landingPageViews })
       .from(advertiserReportItems)
       .where(and(eq(advertiserReportItems.reportId, id), eq(advertiserReportItems.window, "previous_day")));
     const previousTotals = previousRows.reduce(
@@ -219,7 +225,7 @@ export async function saveAdvertiserReport(user: SessionUser, formData: FormData
       { spent: 0, leads: 0 },
     );
     const values = (previousRows.length ? metrics : []).flatMap((metric) => {
-      const value = metric.key === "ad_spend" ? previousTotals.spent : metric.key === "leads" ? previousTotals.leads : null;
+      const value = metric.key === "ad_spend" ? previousTotals.spent : metric.key === "leads" ? previousTotals.leads : metric.key === "landing_page_views" && previousRows.every((row) => row.landingPageViews !== null) ? previousRows.reduce((sum, row) => sum + (row.landingPageViews ?? 0), 0) : null;
       return value === null ? [] : [{ reportId: id, userId: user.id, metricId: metric.id, date, value }];
     });
     if (values.length) await tx.insert(kpiEntries).values(values);

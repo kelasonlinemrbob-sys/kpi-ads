@@ -4,8 +4,10 @@ import { and, eq, inArray, isNotNull, notInArray } from "drizzle-orm";
 import { db } from "@/db";
 import { adAccounts, campaigns } from "@/db/schema";
 import { fetchAccountCampaigns, type AdsCampaignMetrics, type AdsMetrics } from "@/lib/ads-api";
+import { sumLandingPageViews } from "@/lib/ads-lpv";
 import { matchProduct } from "@/lib/ads-matching";
 import { requireUser } from "@/lib/auth";
+import { can } from "@/lib/roles";
 import { todayISO } from "@/lib/kpi";
 import { getReportRules } from "@/lib/report-rules";
 import { PLATFORM_LABEL } from "@/lib/labels";
@@ -21,10 +23,11 @@ export type GeneratedAdsReport =
       /** Campaigns with delivery that don't carry any product code, per account. */
       unmapped: { account: string; spent: number; campaigns: { name: string; spent: number }[] }[];
       errors: { account: string; error: string }[];
+      warnings: { account: string; message: string }[];
     }
   | { ok: false; error: string };
 
-const ZERO: AdsMetrics = { spent: 0, impressions: 0, clicks: 0, leads: 0 };
+const ZERO: AdsMetrics = { landingPageViews: null, spent: 0, impressions: 0, clicks: 0, leads: 0 };
 
 /**
  * Pulls every campaign of the ad accounts the advertiser's products run in, then groups them
@@ -32,7 +35,7 @@ const ZERO: AdsMetrics = { spent: 0, impressions: 0, clicks: 0, leads: 0 };
  */
 export async function generateAdsReport(date: string, performanceDate: string): Promise<GeneratedAdsReport> {
   const user = await requireUser();
-  if (user.role !== "advertiser") return { ok: false, error: "Hanya advertiser yang dapat generate laporan iklan." };
+  if (!can.runAds(user.role)) return { ok: false, error: "Hanya advertiser yang dapat generate laporan iklan." };
   const today = todayISO();
   const { backfillDays } = await getReportRules();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > today || date < addDays(today, -backfillDays)) {
@@ -75,18 +78,20 @@ export async function generateAdsReport(date: string, performanceDate: string): 
   );
   const unmapped: Extract<GeneratedAdsReport, { ok: true }>["unmapped"] = [];
   const errors: Extract<GeneratedAdsReport, { ok: true }>["errors"] = [];
+  const warnings: { account: string; message: string }[] = [];
   const failedAccounts = new Set<number>();
 
   await Promise.all(
     accounts.map(async (account) => {
       const label = `${account.name} (${PLATFORM_LABEL[account.platform]})`;
       if (account.platform !== "meta" && account.platform !== "google") return;
-      const result = await fetchAccountCampaigns({ platform: account.platform, accountId: account.accountId }, performanceDate);
+      const result = await fetchAccountCampaigns({ platform: account.platform, accountId: account.accountId, lpvConversionAction: account.lpvConversionAction }, performanceDate);
       if (!result.ok) {
         failedAccounts.add(account.id);
         errors.push({ account: label, error: result.error });
         return;
       }
+      for (const message of result.warnings ?? []) warnings.push({ account: label, message });
       const products = linkedProducts.filter((product) => product.adAccountId === account.id);
       const orphans: { name: string; spent: number }[] = [];
       for (const campaign of result.campaigns) {
@@ -104,6 +109,10 @@ export async function generateAdsReport(date: string, performanceDate: string): 
         total.clicks += rounded.clicks;
         total.leads += rounded.leads;
         total.campaigns.push(rounded);
+      }
+      for (const product of products) {
+        const total = totals.get(product.id);
+        if (total) total.landingPageViews = sumLandingPageViews(total.campaigns, result.lpvAvailable ? 0 : null);
       }
       if (orphans.length) {
         unmapped.push({ account: label, spent: orphans.reduce((sum, c) => sum + c.spent, 0), campaigns: orphans });
@@ -126,9 +135,11 @@ export async function generateAdsReport(date: string, performanceDate: string): 
           impressions: total.impressions,
           clicks: total.clicks,
           leads: total.leads,
+          landingPageViews: total.landingPageViews,
         };
       }),
     unmapped,
     errors,
+    warnings,
   };
 }

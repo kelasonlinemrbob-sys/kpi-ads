@@ -67,12 +67,14 @@ export const kpiMetrics = pgTable("kpi_metrics", {
   higherIsBetter: boolean("higher_is_better").notNull().default(true),
   /** Weight in the KPI score. 0 = tracked only. */
   weight: integer("weight").notNull().default(0),
-  /** Monthly target used when no per-user target exists. */
+  /** Default in targetMode units: monthly value, daily count, or growth percentage. */
   defaultTarget: doublePrecision("default_target"),
+  /** Daily count, monthly total, or percentage growth against the previous month. */
+  targetMode: varchar("target_mode", { length: 12 }).$type<"monthly" | "daily" | "growth">().notNull().default("monthly"),
   sortOrder: integer("sort_order").notNull().default(0),
 });
 
-/** Monthly target override for one member. */
+/** Override for one member and month, in the metric's targetMode units. */
 export const kpiTargets = pgTable(
   "kpi_targets",
   {
@@ -90,6 +92,19 @@ export const kpiTargets = pgTable(
   (t) => [uniqueIndex("kpi_targets_user_metric_period").on(t.userId, t.metricId, t.period)],
 );
 
+export type WebmasterTaskSnapshot = {
+  taskId: number;
+  clientKey?: string;
+  title: string;
+  category: string | null;
+  status: (typeof taskStatusEnum.enumValues)[number];
+  priority: (typeof priorityEnum.enumValues)[number];
+  dueDate: string | null;
+  note: string;
+  resultUrl: string;
+  minutesSpent: number;
+};
+
 export const dailyReports = pgTable(
   "daily_reports",
   {
@@ -101,6 +116,8 @@ export const dailyReports = pgTable(
     summary: text("summary").notNull(),
     blockers: text("blockers"),
     planTomorrow: text("plan_tomorrow"),
+    /** Task state at submission time, independent of subsequent edits or deletion on the task board. */
+    webmasterTasks: jsonb("webmaster_tasks").$type<WebmasterTaskSnapshot[]>().notNull().default([]),
     status: reportStatusEnum("status").notNull().default("submitted"),
     reviewerId: integer("reviewer_id").references(() => users.id, { onDelete: "set null" }),
     reviewNote: text("review_note"),
@@ -142,6 +159,7 @@ export const adAccounts = pgTable(
     /** Meta ad account ID without "act_", or Google Ads customer ID — digits only. */
     accountId: varchar("account_id", { length: 32 }).notNull(),
     name: varchar("name", { length: 120 }).notNull(),
+    lpvConversionAction: varchar("lpv_conversion_action", { length: 180 }),
     createdById: integer("created_by_id").references(() => users.id, { onDelete: "set null" }),
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
     lastSyncError: text("last_sync_error"),
@@ -200,6 +218,29 @@ export const adCreatives = pgTable(
     index("ad_creatives_creator").on(t.creatorId),
   ],
 );
+
+/** Successful, atomic Creative snapshot for one account and exact date range (including an empty result). */
+export const creativeSyncs = pgTable("creative_syncs", {
+  id: serial("id").primaryKey(),
+  adAccountId: integer("ad_account_id").notNull().references(() => adAccounts.id, { onDelete: "cascade" }),
+  periodStart: date("period_start").notNull(),
+  periodEnd: date("period_end").notNull(),
+  syncedAt: timestamp("synced_at", { withTimezone: true }).notNull(),
+}, (t) => [uniqueIndex("creative_syncs_account_period").on(t.adAccountId, t.periodStart, t.periodEnd)]);
+
+/** Whole-period Meta metrics. Never aggregate daily reach or combine different snapshot windows. */
+export const creativeMetrics = pgTable("creative_metrics", {
+  syncId: integer("sync_id").notNull().references(() => creativeSyncs.id, { onDelete: "cascade" }),
+  creativeId: integer("creative_id").notNull().references(() => adCreatives.id, { onDelete: "cascade" }),
+  impressions: integer("impressions").notNull(),
+  reach: integer("reach").notNull(),
+  videoViews: integer("video_views").notNull(),
+  thruplays: integer("thruplays").notNull(),
+  avgPlayTime: doublePrecision("avg_play_time"),
+  spend: doublePrecision("spend").notNull(),
+  clicks: integer("clicks").notNull(),
+  leads: integer("leads").notNull(),
+}, (t) => [primaryKey({ columns: [t.syncId, t.creativeId] }), index("creative_metrics_creative").on(t.creativeId)]);
 
 /** Campaign as it exists on Meta / Google Ads, refreshed by "Sinkron dari Ads". */
 export const adCampaigns = pgTable(
@@ -262,6 +303,7 @@ export const advertiserReportItems = pgTable(
     platform: platformEnum("platform").notNull(),
     /** Snapshot so historical reports keep their label when a campaign is renamed. */
     product: varchar("product", { length: 120 }).notNull(),
+    landingPageViews: integer("landing_page_views"),
     spent: doublePrecision("spent").notNull(),
     impressions: integer("impressions").notNull(),
     clicks: integer("clicks").notNull(),
@@ -288,6 +330,7 @@ export const advertiserReportItemCampaigns = pgTable(
     spent: doublePrecision("spent").notNull(),
     impressions: integer("impressions").notNull(),
     clicks: integer("clicks").notNull(),
+    landingPageViews: integer("landing_page_views"),
     leads: integer("leads").notNull(),
   },
   (t) => [index("advertiser_report_item_campaigns_item").on(t.itemId)],
@@ -455,3 +498,19 @@ export type AdAccount = typeof adAccounts.$inferSelect;
 export type AdCampaign = typeof adCampaigns.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type Activity = typeof activities.$inferSelect;
+
+/** Only SHA-256 digests are stored; raw reset links are delivered by email. */
+export const passwordResetTokens = pgTable("password_reset_tokens", {
+  tokenHash: varchar("token_hash", { length: 64 }).primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  sessionVersion: integer("session_version").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+}, (t) => [index("password_reset_user_idx").on(t.userId), index("password_reset_expiry_idx").on(t.expiresAt)]);
+
+/** Shared across server processes; keys are HMACs, never raw emails or IP addresses. */
+export const passwordResetLimits = pgTable("password_reset_limits", {
+  key: varchar("key", { length: 64 }).primaryKey(),
+  windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+  attempts: integer("attempts").notNull().default(1),
+});

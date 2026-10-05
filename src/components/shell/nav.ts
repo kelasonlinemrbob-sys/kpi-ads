@@ -22,7 +22,12 @@ export type NavSection = { label: string; items: NavItem[] };
 export type NavCounts = { pendingReviews: number; openTasks: number; revisions: number };
 
 export function buildNav(role: Role, counts: NavCounts, seniorAdvertiser = false): NavSection[] {
-  const main: NavItem[] = [{ title: "Overview", href: "/dashboard", icon: LayoutGridIcon }];
+  const main: NavItem[] = [{ title: "Overview", href: "/dashboard", icon: LayoutGridIcon,
+    ...(role === "supervisor" ? { children: [
+      { title: "Dashboard Tim", href: "/dashboard" },
+      { title: "Iklan Saya", href: "/dashboard?view=ads" },
+    ] } : {}),
+  }];
 
   main.push({
     title: "Daily Reports",
@@ -30,6 +35,9 @@ export function buildNav(role: Role, counts: NavCounts, seniorAdvertiser = false
     icon: ClipboardListIcon,
     children: can.reviewReports(role)
       ? [
+          { title: "Submit Report", href: "/reports/new" },
+          { title: "Laporan Iklan Saya", href: "/reports?view=mine" },
+          { title: "Catatan Harian", href: "/reports/notes" },
           { title: "All Reports", href: "/reports" },
           { title: "Pending Review", href: "/reports?status=submitted", badge: counts.pendingReviews },
           { title: "Needs Revision", href: "/reports?status=revision" },

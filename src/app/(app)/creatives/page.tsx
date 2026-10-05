@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { eq, max } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { ClapperboardIcon, DownloadIcon, LayoutGridIcon, PieChartIcon, SearchIcon, TableIcon, type LucideIcon } from "lucide-react";
 import { db } from "@/db";
-import { adAccounts, adCreatives } from "@/db/schema";
+import { adAccounts, creativeSyncs } from "@/db/schema";
+import { creativePeriod, CREATIVE_PERIODS } from "@/lib/creative-period";
 import { requireUser } from "@/lib/auth";
 import { CREATIVE_FORMAT_LABEL, CREATIVE_LABEL, CREATIVE_STATUS_LABEL, creativeRates, fmt, sumCreatives } from "@/lib/creatives";
 import { getCreativeRows, getCreativeTeam, groupByPost, parseCreativeFilters } from "@/lib/creatives-data";
@@ -34,14 +35,17 @@ export default async function CreativesPage({ searchParams }: { searchParams: Pr
   const view = VIEWS.find((v) => v.key === sp.view)?.key ?? "ringkasan";
   const rank = RANKS.find((r) => r === sp.rank) ?? "impressions";
   const filters = parseCreativeFilters(sp, user);
+  const period = creativePeriod(filters.period);
 
-  const [rows, allRows, team, metaAccounts, [lastSync]] = await Promise.all([
+  const [rows, allRows, team, metaAccounts, syncs] = await Promise.all([
     getCreativeRows(filters),
-    getCreativeRows(),
+    getCreativeRows({ period: period.key }),
     getCreativeTeam(),
-    db.select({ id: adAccounts.id }).from(adAccounts).where(eq(adAccounts.platform, "meta")),
-    db.select({ at: max(adCreatives.syncedAt) }).from(adCreatives),
+    db.select({ id: adAccounts.id, name: adAccounts.name }).from(adAccounts).where(eq(adAccounts.platform, "meta")),
+    db.select().from(creativeSyncs).where(and(eq(creativeSyncs.periodStart, period.start), eq(creativeSyncs.periodEnd, period.end))),
   ]);
+  const lastSync = syncs.map((s) => s.syncedAt).sort((a, b) => b.getTime() - a.getTime())[0];
+  const missingAccounts = metaAccounts.filter((a) => !syncs.some((s) => s.adAccountId === a.id));
   const posts = groupByPost(rows, filters.sort);
 
   // Filter options come from everything synced, so a filter never hides its own choices.
@@ -50,11 +54,13 @@ export default async function CreativesPage({ searchParams }: { searchParams: Pr
   const isCreative = user.role === "creative" || user.secondaryRole === "creative";
   const query = (patch: Record<string, string | null>) => {
     const params = new URLSearchParams(Object.entries(sp).filter(([, v]) => v) as [string, string][]);
+    params.set("period", period.key);
+    params.delete("created");
     for (const [k, v] of Object.entries(patch)) (v === null ? params.delete(k) : params.set(k, v));
     return params.toString();
   };
   const exportHref = `/api/creatives/export?${query({ view: null, rank: null })}`;
-  const activeFilters = ["advertiser", "product", "status", "format", "label", "creator", "q", "created"].filter((k) => sp[k]).length;
+  const activeFilters = ["advertiser", "product", "status", "format", "label", "creator", "q"].filter((k) => sp[k]).length;
   const totals = sumCreatives(rows);
   const rates = creativeRates(totals);
 
@@ -63,7 +69,7 @@ export default async function CreativesPage({ searchParams }: { searchParams: Pr
       <PageHeader
         title="Creative"
         description={`Laporan konten iklan Meta Ads untuk tim creative dan advertiser.${
-          lastSync?.at ? ` Data per ${lastSync.at.toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}.` : ""
+          lastSync ? ` Data per ${lastSync.toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}.` : ""
         }`}
         actions={
           <>
@@ -72,7 +78,7 @@ export default async function CreativesPage({ searchParams }: { searchParams: Pr
                 <DownloadIcon /> Export CSV
               </a>
             </Button>
-            <SyncCreativesButton disabled={metaAccounts.length === 0} />
+            <SyncCreativesButton period={period.key} disabled={metaAccounts.length === 0} />
           </>
         }
       />
@@ -108,25 +114,14 @@ export default async function CreativesPage({ searchParams }: { searchParams: Pr
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <form className="relative" action="/creatives">
           {Object.entries(sp)
-            .filter(([k, v]) => k !== "q" && v)
+            .filter(([k, v]) => k !== "q" && k !== "created" && v)
             .map(([k, v]) => (
               <input key={k} type="hidden" name={k} value={v} />
             ))}
           <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input name="q" defaultValue={sp.q ?? ""} placeholder="Cari iklan, campaign, link…" className="h-8 w-56 pl-8" />
         </form>
-        <UrlSelect
-          param="created"
-          label="Iklan dibuat"
-          value={sp.created ?? "all"}
-          options={[
-            { value: "all", label: "Semua waktu" },
-            { value: "7d", label: "Dibuat 7 hari terakhir" },
-            { value: "30d", label: "Dibuat 30 hari terakhir" },
-            { value: "90d", label: "Dibuat 90 hari terakhir" },
-            { value: "month", label: "Dibuat bulan ini" },
-          ]}
-        />
+        <UrlSelect param="period" label="Periode performa Creative" value={period.key} options={[...CREATIVE_PERIODS]} />
         <UrlSelect
           param="advertiser"
           label="Advertiser"
@@ -211,17 +206,24 @@ export default async function CreativesPage({ searchParams }: { searchParams: Pr
         )}
       </div>
 
+      <div className="mb-3 rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+        <p><span className="font-medium">{period.label}: {period.start} – {period.end}</span> · Termasuk hari ini · Zona waktu akun iklan.</p>
+        <p className="text-xs text-muted-foreground">Hanya iklan dengan data performa pada periode ini yang diambil, termasuk iklan lama yang masih tayang. Setelah mengganti periode, klik Sinkron dari Meta bila datanya belum tersedia.</p>
+        {missingAccounts.length > 0 && <p className="mt-1 text-xs text-warning" role="status">{missingAccounts.length} akun belum disinkron untuk periode ini: {missingAccounts.map((a) => a.name).join(", ")}. Angka yang tampil hanya mencakup akun yang sudah disinkron.</p>}
+      </div>
+
       {allRows.length === 0 ? (
         <Panel>
           <EmptyState
             icon={ClapperboardIcon}
-            title="Belum ada konten iklan"
+            title={syncs.length && !missingAccounts.length ? "Tidak ada aktivitas iklan pada periode ini" : "Data periode ini belum tersedia"}
             description={
               metaAccounts.length === 0
                 ? "Tambahkan akun Meta di Campaigns → Akun iklan dan isi token di Pengaturan → Integrasi, lalu sinkron."
-                : "Klik Sinkron dari Meta untuk mengambil semua iklan beserta link konten, format dan performanya."
+                : syncs.length && !missingAccounts.length ? "Meta tidak mengembalikan data iklan untuk periode ini. Pilih periode lain bila diperlukan."
+                : `Klik Sinkron dari Meta untuk mengambil konten dan performa ${period.label.toLowerCase()}.`
             }
-            action={metaAccounts.length > 0 ? <SyncCreativesButton /> : undefined}
+            action={metaAccounts.length > 0 ? <SyncCreativesButton period={period.key} /> : undefined}
           />
         </Panel>
       ) : rows.length === 0 ? (
@@ -239,8 +241,8 @@ export default async function CreativesPage({ searchParams }: { searchParams: Pr
       )}
 
       <p className="mt-3 text-xs text-muted-foreground">
-        Angka lifetime dari Meta. Keterangan, creator, editor dan format yang diubah manual disimpan tim dan tidak tertimpa saat sinkron.
-        Iklan yang memakai post yang sama digabung menjadi satu konten di Ringkasan dan Galeri.
+        Angka dari Meta sesuai periode {period.start}–{period.end}, bukan lifetime. Keterangan, creator, editor dan format yang diubah manual disimpan tim dan tidak tertimpa saat sinkron.
+        Iklan yang memakai post yang sama digabung menjadi satu konten di Ringkasan dan Galeri. Jumlah reach antar-iklan dapat menghitung orang yang sama lebih dari sekali.
       </p>
     </>
   );

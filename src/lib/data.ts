@@ -18,6 +18,7 @@ import {
 } from "@/db/schema";
 import { combineScores, needsReview, roleSlots, type RoleHolder, type RoleSlot } from "@/lib/member-roles";
 import type { SessionUser } from "@/lib/auth";
+import { taskCompletionAt } from "@/lib/task-kpi";
 import {
   comparableRange,
   type Entry,
@@ -28,22 +29,26 @@ import {
   type KpiStatus,
   type MetricResult,
   datesBetween,
+  shiftPeriod,
 } from "@/lib/kpi";
 
 /**
  * Members whose reports go through supervisor review: anyone who isn't purely an advertiser
  * (an advertiser with a second role, e.g. SEO, gets that part reviewed). SQL twin of needsReview().
  */
-export const reviewedMemberSql = or(
-  ne(users.role, "advertiser"),
-  and(isNotNull(users.secondaryRole), notInArray(users.secondaryRole, ["advertiser", "supervisor"])),
+export const reviewedMemberSql = and(
+  ne(users.role, "supervisor"),
+  or(
+    ne(users.role, "advertiser"),
+    and(isNotNull(users.secondaryRole), notInArray(users.secondaryRole, ["advertiser", "supervisor"])),
+  ),
 )!;
 
 export const getMetrics = cache(async () =>
   db.select().from(kpiMetrics).orderBy(asc(kpiMetrics.role), asc(kpiMetrics.sortOrder)),
 );
 
-export const getMembers = cache(async (includeInactive = false) =>
+export const getMembers = cache(async (includeInactive = false, includeSupervisors = false) =>
   db
     .select({
       id: users.id,
@@ -59,7 +64,7 @@ export const getMembers = cache(async (includeInactive = false) =>
       createdAt: users.createdAt,
     })
     .from(users)
-    .where(includeInactive ? ne(users.role, "supervisor") : and(ne(users.role, "supervisor"), eq(users.isActive, true)))
+    .where(and(includeSupervisors ? undefined : ne(users.role, "supervisor"), includeInactive ? undefined : eq(users.isActive, true)))
     .orderBy(asc(users.name)),
 );
 
@@ -75,7 +80,7 @@ export async function getAllUsers() {
 export async function getEntries(start: string, end: string, userIds?: number[]): Promise<Entry[]> {
   if (userIds && userIds.length === 0) return [];
   const rows = await db
-    .select({ userId: kpiEntries.userId, metricId: kpiEntries.metricId, date: kpiEntries.date, value: kpiEntries.value })
+    .select({ userId: kpiEntries.userId, metricId: kpiEntries.metricId, date: kpiEntries.date, value: kpiEntries.value, reportId: kpiEntries.reportId })
     .from(kpiEntries)
     .where(
       and(
@@ -84,7 +89,49 @@ export async function getEntries(start: string, end: string, userIds?: number[])
         userIds ? inArray(kpiEntries.userId, userIds) : undefined,
       ),
     );
-  return rows;
+  const metrics = await getMetrics();
+  // Ads belong to their performance date, including the weekend reported on Monday.
+  // Replace legacy report-date totals whenever source product rows are available.
+  const ads = await db.select({
+    reportId: dailyReports.id, userId: dailyReports.userId, date: advertiserReportItems.performanceDate,
+    spent: advertiserReportItems.spent, leads: advertiserReportItems.leads, lpv: advertiserReportItems.landingPageViews,
+  }).from(advertiserReportItems).innerJoin(dailyReports, eq(dailyReports.id, advertiserReportItems.reportId)).where(and(
+    eq(advertiserReportItems.window, "previous_day"),
+    userIds ? inArray(dailyReports.userId, userIds) : undefined,
+    or(and(gte(advertiserReportItems.performanceDate, start), lte(advertiserReportItems.performanceDate, end)),
+      and(gte(dailyReports.date, start), lte(dailyReports.date, end))),
+  ));
+  const sourceReports = new Set(ads.map((row) => row.reportId));
+  const adsMetrics = metrics.filter((m) => ["ad_spend", "leads", "landing_page_views"].includes(m.key));
+  const adsMetricIds = new Set(adsMetrics.map((m) => m.id));
+  const result: Entry[] = rows.filter((row) => !(sourceReports.has(row.reportId) && adsMetricIds.has(row.metricId)));
+  const grouped = new Map<string, typeof ads>();
+  for (const row of ads) {
+    if (row.date < start || row.date > end) continue;
+    const key = `${row.userId}:${row.date}`;
+    grouped.set(key, [...(grouped.get(key) ?? []), row]);
+  }
+  for (const group of grouped.values()) {
+    const first = group[0]!;
+    for (const metric of adsMetrics) {
+      if (metric.key === "landing_page_views" && group.some((r) => r.lpv === null)) continue;
+      const value = group.reduce((sum, r) => sum + (metric.key === "ad_spend" ? r.spent : metric.key === "leads" ? r.leads : r.lpv ?? 0), 0);
+      result.push({ userId: first.userId, metricId: metric.id, date: first.date, value });
+    }
+  }
+  const taskMetric = metrics.find((m) => m.key === "task_completion");
+  if (taskMetric) {
+    const assigned = await db.select().from(tasks).where(userIds ? inArray(tasks.assigneeId, userIds) : undefined);
+    const ids = [...new Set(assigned.map((t) => t.assigneeId))];
+    for (const date of datesBetween(start, end)) {
+      const range = periodRange(date.slice(0, 7));
+      for (const userId of ids) {
+        const value = taskCompletionAt(assigned.filter((t) => t.assigneeId === userId), range.start, range.end, date);
+        if (value !== null) result.push({ userId, metricId: taskMetric.id, date, value });
+      }
+    }
+  }
+  return result;
 }
 
 export async function getTargetMap(period: string, userIds?: number[]) {
@@ -126,6 +173,7 @@ function scoreRoles(opts: {
   member: RoleHolder;
   metrics: KpiMetric[];
   entries: Entry[];
+  previousEntries?: Entry[];
   targets: Map<number, number>;
   period: string;
   asOf: string;
@@ -136,6 +184,7 @@ function scoreRoles(opts: {
       metrics: opts.metrics.filter((m) => m.role === slot.role),
       allMetrics: opts.metrics,
       entries: opts.entries,
+      previousEntries: opts.previousEntries,
       targets: opts.targets,
       period: opts.period,
       asOf: opts.asOf,
@@ -150,6 +199,12 @@ export async function getScorecards(period: string, members: Scorecard["member"]
   const asOf = periodAsOf(period);
   const { start } = periodRange(period);
   const prev = comparableRange(period, asOf);
+  const baselineRange = periodRange(prev.period);
+  const olderRange = periodRange(shiftPeriod(period, -2));
+  const [baseline, olderBaseline] = await Promise.all([
+    getEntries(baselineRange.start, baselineRange.end, ids),
+    getEntries(olderRange.start, olderRange.end, ids),
+  ]);
   const [metrics, entries, prevEntries, targets, prevTargets, reportStats] = await Promise.all([
     getMetrics(),
     getEntries(start, asOf, ids),
@@ -175,6 +230,7 @@ export async function getScorecards(period: string, members: Scorecard["member"]
       member,
       metrics,
       entries: entries.filter((e) => e.userId === member.id),
+      previousEntries: baseline.filter((e) => e.userId === member.id),
       targets: targets.get(member.id) ?? new Map(),
       period,
       asOf,
@@ -183,6 +239,7 @@ export async function getScorecards(period: string, members: Scorecard["member"]
       member,
       metrics,
       entries: prevEntries.filter((e) => e.userId === member.id),
+      previousEntries: olderBaseline.filter((e) => e.userId === member.id),
       targets: prevTargets.get(member.id) ?? new Map(),
       period: prev.period,
       asOf: prev.end,
@@ -207,6 +264,8 @@ export async function getTeamScoreSeries(period: string, members: Scorecard["mem
   const ids = members.map((m) => m.id);
   const asOf = periodAsOf(period);
   const { start } = periodRange(period);
+  const prev = periodRange(shiftPeriod(period, -1));
+  const previousEntries = await getEntries(prev.start, prev.end, ids);
   const [metrics, entries, targets] = await Promise.all([getMetrics(), getEntries(start, asOf, ids), getTargetMap(period, ids)]);
   return datesBetween(start, asOf).map((date) => {
     const scores = members
@@ -216,6 +275,7 @@ export async function getTeamScoreSeries(period: string, members: Scorecard["mem
             member,
             metrics,
             entries: entries.filter((e) => e.userId === member.id && e.date <= date),
+            previousEntries: previousEntries.filter((e) => e.userId === member.id),
             targets: targets.get(member.id) ?? new Map(),
             period,
             asOf: date,
@@ -227,10 +287,10 @@ export async function getTeamScoreSeries(period: string, members: Scorecard["mem
   });
 }
 
-export async function getActivities(user: Pick<SessionUser, "id" | "role">, limit = 60) {
+export async function getActivities(user: Pick<SessionUser, "id" | "role">, limit = 60, personal = false) {
   const since = new Date(Date.now() - 8 * 86_400_000);
   const scope =
-    user.role === "supervisor"
+    user.role === "supervisor" && !personal
       ? gte(activities.createdAt, since)
       : and(gte(activities.createdAt, since), or(eq(activities.subjectUserId, user.id), eq(activities.actorId, user.id)));
   return db

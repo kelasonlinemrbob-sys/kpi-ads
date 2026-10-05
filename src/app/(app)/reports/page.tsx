@@ -42,13 +42,14 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
 
   // A dual-role advertiser (e.g. + SEO) can switch to the plain list to follow the review of their other part.
   const dualAdvertiser = user.role === "advertiser" && hasSecondRole(user);
-  if (user.role === "advertiser" && !(dualAdvertiser && sp.view === "all")) {
+  if ((isSupervisor && sp.view === "mine") || (user.role === "advertiser" && !(dualAdvertiser && sp.view === "all"))) {
     const filter = sp.filter === "todo" ? "todo" : "all";
     const { range, options: rangeOptions } = resolveReportRange(sp.range, todayISO());
     const [wa] = await db.select().from(waSessions).where(eq(waSessions.userId, user.id));
     const waReady = wa?.status === "connected" && !!wa.groupJid && wa.autoSend;
     const href = (next: "all" | "todo") => {
       const params = new URLSearchParams(sp.range ? { range: sp.range } : {});
+      if (isSupervisor) params.set("view", "mine");
       if (next === "todo") params.set("filter", "todo");
       const qs = params.toString();
       return qs ? `/reports?${qs}` : "/reports";
@@ -111,7 +112,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
 
   const [metrics, members, statusCounts, [{ total }], reports] = await Promise.all([
     getMetrics(),
-    isSupervisor ? getMembers(true) : Promise.resolve([]),
+    isSupervisor ? getMembers(true, true) : Promise.resolve([]),
     db
       .select({ status: dailyReports.status, role: users.role, secondaryRole: users.secondaryRole, n: count() })
       .from(dailyReports)
@@ -207,13 +208,11 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                 <Link href="/reports">Laporan iklan</Link>
               </Button>
             )}
-            {!isSupervisor && (
-              <Button asChild className="h-8">
-                <Link href="/reports/new">
-                  <ClipboardPenIcon /> Submit report
-                </Link>
-              </Button>
-            )}
+            <Button asChild className="h-8">
+              <Link href="/reports/new">
+                <ClipboardPenIcon /> Submit report
+              </Link>
+            </Button>
           </>
         }
       />

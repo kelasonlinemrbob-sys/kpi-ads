@@ -41,6 +41,8 @@ export function ItemRow({
         <TableCell className="text-right tabular-nums">{formatNumber(item.impressions)}</TableCell>
         <TableCell className="text-right tabular-nums">{formatNumber(item.clicks)}</TableCell>
         <TableCell className="text-right font-medium tabular-nums">{formatNumber(item.leads)}</TableCell>
+        <TableCell className="text-right tabular-nums">{item.landingPageViews === null ? "—" : formatNumber(item.landingPageViews)}</TableCell>
+        <TableCell className="text-right tabular-nums">{item.landingPageViews ? formatRupiah(item.spent / item.landingPageViews) : "—"}</TableCell>
       </TableRow>
       {open &&
         campaigns.map((campaign) => (
@@ -53,6 +55,8 @@ export function ItemRow({
             <TableCell className="text-right tabular-nums">{formatNumber(campaign.impressions)}</TableCell>
             <TableCell className="text-right tabular-nums">{formatNumber(campaign.clicks)}</TableCell>
             <TableCell className="text-right tabular-nums">{formatNumber(campaign.leads)}</TableCell>
+            <TableCell className="text-right tabular-nums">{campaign.landingPageViews === null ? "—" : formatNumber(campaign.landingPageViews)}</TableCell>
+            <TableCell className="text-right tabular-nums">{campaign.landingPageViews ? formatRupiah(campaign.spent / campaign.landingPageViews) : "—"}</TableCell>
           </TableRow>
         ))}
     </>

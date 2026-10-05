@@ -67,6 +67,9 @@ export function aggregate(
     const num = metricsByKey.get(metric.numeratorKey ?? "");
     const den = metricsByKey.get(metric.denominatorKey ?? "");
     if (!num || !den) return null;
+    // A partial LPV denominator would overstate cost; missing LPV is not zero.
+    if (metric.key === "cplv" && entries.some((e) => e.metricId === num.id &&
+      !entries.some((v) => v.metricId === den.id && v.userId === e.userId && v.date === e.date))) return null;
     let n = 0;
     let d = 0;
     for (const e of entries) {
@@ -89,7 +92,8 @@ export function aggregate(
         const cur = latest.get(e.userId);
         if (!cur || e.date > cur.date) latest.set(e.userId, e);
       }
-      return [...latest.values()].reduce((s, e) => s + e.value, 0);
+      const total = [...latest.values()].reduce((s, e) => s + e.value, 0);
+      return metric.key === "task_completion" ? total / latest.size : total;
     }
   }
 }
@@ -118,7 +122,8 @@ export function scoreMember(opts: {
   metrics: KpiMetric[]; // metrics of the member's role
   allMetrics: KpiMetric[];
   entries: Entry[]; // member's entries within [period start, asOf]
-  targets: Map<number, number>; // metricId -> monthly target override
+  targets: Map<number, number>; // metricId -> override in the metric's targetMode units
+  previousEntries?: Entry[]; // full previous calendar month, for growth targets
   period: string;
   asOf: string;
   /** Scales default targets for someone who spends only part of their time on this role (0.6 = 60%). */
@@ -133,9 +138,20 @@ export function scoreMember(opts: {
     const actual = aggregate(metric, opts.entries, byKey);
     // A per-member override is taken as-is; the default target shrinks with the member's share of the role.
     const override = opts.targets.get(metric.id);
-    const target = override ?? (metric.defaultTarget === null ? null : scaleTarget(metric, metric.defaultTarget, opts.targetScale ?? 1));
+    const configured = override ?? metric.defaultTarget;
+    let target = configured;
+    if (configured !== null) {
+      if (metric.targetMode === "growth") {
+        const baseline = aggregate(metric, opts.previousEntries ?? [], byKey);
+        target = baseline !== null && baseline > 0 ? baseline * (1 + configured / 100) : null;
+      } else {
+        target = configured * (metric.targetMode === "daily" ? days : 1);
+        if (override === undefined) target = scaleTarget(metric, target, opts.targetScale ?? 1);
+      }
+    }
     const expected = target === null ? null : metric.aggregation === "sum" ? target * fraction : target;
-    return { metric, actual, target, expected, achievement: achievementOf(metric, actual, expected) };
+    const unavailable = actual === null && (metric.key === "task_completion" || metric.key === "cplv");
+    return { metric, actual, target, expected, achievement: unavailable ? null : achievementOf(metric, actual, expected) };
   });
 
   let weighted = 0;
@@ -148,9 +164,9 @@ export function scoreMember(opts: {
   return { score: totalWeight ? (weighted / totalWeight) * 100 : null, results };
 }
 
-/** Totals scale with time spent on the role; averages, ratios and rates (e.g. CPL, PageSpeed) don't. */
+/** Monthly totals scale with role share; daily standards, averages, ratios and growth rates don't. */
 export function scaleTarget(metric: KpiMetric, target: number, scale: number) {
-  return metric.aggregation === "sum" && scale !== 1 ? target * scale : target;
+  return metric.aggregation === "sum" && metric.targetMode === "monthly" && scale !== 1 ? target * scale : target;
 }
 
 export type KpiStatus = "exceeding" | "on_track" | "at_risk" | "off_track" | "no_data";

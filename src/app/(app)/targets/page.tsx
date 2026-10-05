@@ -17,7 +17,7 @@ export default async function TargetsPage({ searchParams }: { searchParams: Prom
   const sp = await searchParams;
   const { period, options } = resolvePeriod(sp.period);
   const role = MEMBER_ROLES.find((r) => r === sp.role) ?? "advertiser";
-  const [metrics, members] = await Promise.all([getMetrics(), getMembers()]);
+  const [metrics, members] = await Promise.all([getMetrics(), getMembers(false, true)]);
   const roleMetrics = metrics.filter((m) => m.role === role);
   // Members holding the role as main or second role; the second role's defaults are prorated by its share.
   const roleMembers = members.filter((m) => hasRole(m, role));
@@ -50,7 +50,9 @@ export default async function TargetsPage({ searchParams }: { searchParams: Prom
         period={period}
         metrics={roleMetrics.map((m) => ({
           id: m.id,
-          name: m.name,
+          key: m.key,
+          targetMode: m.targetMode,
+          name: m.role === "supervisor" ? `${m.name} · Supervisor` : m.name,
           unit: m.unit,
           aggregation: m.aggregation,
           higherIsBetter: m.higherIsBetter,
@@ -59,7 +61,7 @@ export default async function TargetsPage({ searchParams }: { searchParams: Prom
         }))}
         members={roleMembers.map((m) => ({
           id: m.id,
-          name: m.name,
+          name: m.role === "supervisor" ? `${m.name} · Supervisor` : m.name,
           title: m.title,
           share: roleSlots(m).find((slot) => slot.role === role)?.share ?? 100,
           targets: Object.fromEntries(targets.get(m.id) ?? []),

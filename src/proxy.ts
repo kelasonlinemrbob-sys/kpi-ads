@@ -4,10 +4,16 @@ import { NextResponse, type NextRequest } from "next/server";
 export function proxy(req: NextRequest) {
   const hasSession = req.cookies.has("kpi_session");
   const { pathname } = req.nextUrl;
-  if (!hasSession && pathname !== "/login") {
+  if (!hasSession && !["/login", "/forgot-password", "/reset-password"].includes(pathname)) {
     return NextResponse.redirect(new URL("/login", req.url));
   }
-  return NextResponse.next();
+  const response = NextResponse.next();
+  if (["/forgot-password", "/reset-password"].includes(pathname)) {
+    response.headers.set("Referrer-Policy", "no-referrer");
+    response.headers.set("Cache-Control", "no-store");
+    response.headers.set("X-Robots-Tag", "noindex, nofollow");
+  }
+  return response;
 }
 
 export const config = {

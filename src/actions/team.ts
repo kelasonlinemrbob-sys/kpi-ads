@@ -8,8 +8,9 @@ import { db } from "@/db";
 import { advertiserLevelEnum, kpiMetrics, kpiTargets, roleEnum, users } from "@/db/schema";
 import { createSession, requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
-import { isPeriod } from "@/lib/kpi";
-import { DEFAULT_SECONDARY_SHARE } from "@/lib/member-roles";
+import { isPeriod, periodRange } from "@/lib/kpi";
+import { validTarget } from "@/lib/target-rules";
+import { DEFAULT_SECONDARY_SHARE, hasRole } from "@/lib/member-roles";
 import { ROLE_LABEL, roleLabel } from "@/lib/roles";
 import type { FormState } from "./auth";
 
@@ -118,6 +119,10 @@ export async function saveTargets(_: FormState, formData: FormData): Promise<For
   if (!roleEnum.enumValues.includes(role as never)) return { error: "Invalid role." };
 
   const metrics = await db.select().from(kpiMetrics).where(eq(kpiMetrics.role, role as (typeof roleEnum.enumValues)[number]));
+  const chatCadence = String(formData.get("chatCadence") ?? "monthly");
+  if (!["daily", "monthly"].includes(chatCadence)) return { error: "Periode target chat tidak valid." };
+  const normalize = (key: string, value: number | null) => value !== null && key === "leads" && chatCadence === "daily" ? value * periodRange(period).days : value;
+  const members = await db.select({ id: users.id, role: users.role, secondaryRole: users.secondaryRole }).from(users).where(eq(users.isActive, true));
   const num = (v: FormDataEntryValue | null) => {
     const s = String(v ?? "").trim();
     if (s === "") return null;
@@ -128,9 +133,11 @@ export async function saveTargets(_: FormState, formData: FormData): Promise<For
   let totalWeight = 0;
   const metricUpdates: { id: number; defaultTarget: number | null; weight: number }[] = [];
   for (const m of metrics) {
-    const def = num(formData.get(`default_${m.id}`));
+    const def = normalize(m.key, num(formData.get(`default_${m.id}`)));
     const weight = num(formData.get(`weight_${m.id}`)) ?? 0;
     if (Number.isNaN(def) || Number.isNaN(weight)) return { error: `Invalid number for ${m.name}.` };
+    if (!validTarget(m.key, def, true)) return { error: `Target ${m.name} tidak memenuhi batas minimum / maksimum.` };
+    if (weight < 0 || weight > 100 || !Number.isInteger(weight)) return { error: "Bobot harus berupa bilangan bulat 0–100." };
     totalWeight += weight;
     metricUpdates.push({ id: m.id, defaultTarget: def, weight: Math.round(weight) });
   }
@@ -140,8 +147,12 @@ export async function saveTargets(_: FormState, formData: FormData): Promise<For
   for (const [key, value] of formData.entries()) {
     const m = /^target_(\d+)_(\d+)$/.exec(key);
     if (!m) continue;
-    const target = num(value);
+    const metric = metrics.find((metric) => metric.id === Number(m[2]));
+    const member = members.find((member) => member.id === Number(m[1]));
+    if (!metric || !member || !hasRole(member, metric.role)) return { error: "Anggota atau KPI tidak sesuai role." };
+    const target = normalize(metric.key, num(value));
     if (Number.isNaN(target)) return { error: "Targets must be positive numbers." };
+    if (!validTarget(metric.key, target)) return { error: `Target ${metric.name} tidak memenuhi batas minimum / maksimum.` };
     overrides.push({ userId: Number(m[1]), metricId: Number(m[2]), target });
   }
 

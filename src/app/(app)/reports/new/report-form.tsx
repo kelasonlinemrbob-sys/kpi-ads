@@ -11,6 +11,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Panel } from "@/components/dashboard/panel";
+import type { WebmasterTaskSnapshot } from "@/db/schema";
+import type { WebmasterTaskOption } from "@/lib/webmaster-report";
+import { WebmasterTasksEditor } from "./webmaster-tasks-editor";
+import { SeoDailyTargets } from "@/components/seo-daily-targets";
+import { SEO_REPORT_KEYS, isSeoReportKey, seoValueError, type SeoDailyTarget } from "@/lib/seo-report";
 
 type MetricField = {
   key: string;
@@ -31,6 +36,9 @@ export function ReportForm({
   minDate,
   maxDate,
   metrics,
+  seoTargets = [],
+  webmasterOptions = [],
+  webmasterSnapshots = [],
   existing,
 }: {
   role: string;
@@ -39,17 +47,63 @@ export function ReportForm({
   minDate: string;
   maxDate: string;
   metrics: MetricField[];
+  seoTargets?: SeoDailyTarget[];
+  webmasterOptions?: WebmasterTaskOption[];
+  webmasterSnapshots?: WebmasterTaskSnapshot[];
   existing: { status: string; summary: string; blockers: string | null; planTomorrow: string | null; reviewNote: string | null } | null;
 }) {
   const router = useRouter();
   const [state, action, pending] = useActionState(saveReport, undefined);
-  const inputs = metrics.filter((m) => m.aggregation !== "ratio");
+  const inputs = metrics.filter((m) => m.aggregation !== "ratio" && m.key !== "task_completion");
+  const seo = role === "seo";
+  const webmaster = role === "webmaster";
+  const primaryInputs = seo ? SEO_REPORT_KEYS.flatMap((key) => inputs.filter((m) => m.key === key)) : webmaster ? [] : inputs;
+  const extraInputs = seo ? inputs.filter((m) => !isSeoReportKey(m.key)) : webmaster ? inputs : [];
   const derived = metrics.filter((m) => m.aggregation === "ratio");
   const [values, setValues] = React.useState<Record<string, string>>(() =>
     Object.fromEntries(inputs.map((m) => [m.key, m.value === null ? "" : String(m.value)])),
   );
   const locked = existing?.status === "approved";
   const num = (k: string | null) => Number(values[k ?? ""] || 0);
+
+  const renderInput = (m: MetricField) => (
+    <div key={m.key} className="grid gap-2">
+      <Label htmlFor={m.key}>
+        {m.name}
+        {m.aggregation === "last" && <span className="font-normal text-muted-foreground">(current total)</span>}
+        {m.aggregation === "avg" && <span className="font-normal text-muted-foreground">(today)</span>}
+      </Label>
+      <div className="relative">
+        {m.unit === "currency" && (
+          <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-sm text-muted-foreground">Rp</span>
+        )}
+        <Input
+          id={m.key}
+          name={`metric_${m.key}`}
+          type="number"
+          inputMode={seo && isSeoReportKey(m.key) && m.key !== "seo_score" ? "numeric" : "decimal"}
+          min={0}
+          max={m.unit === "percent" || m.key === "seo_score" ? 100 : undefined}
+          step={seo && isSeoReportKey(m.key) && m.key !== "seo_score" ? 1 : "any"}
+          placeholder="0"
+          value={values[m.key] ?? ""}
+          onChange={(e) => setValues((v) => ({ ...v, [m.key]: e.target.value }))}
+          className={m.unit === "currency" ? "pl-9 tabular-nums" : m.unit === "percent" ? "pr-8 tabular-nums" : "tabular-nums"}
+          disabled={locked}
+          required={!webmaster && (!seo || isSeoReportKey(m.key))}
+        />
+        {m.unit === "percent" && (
+          <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-sm text-muted-foreground">%</span>
+        )}
+      </div>
+      {seo && isSeoReportKey(m.key) && <p className="text-xs font-medium text-muted-foreground">
+        {m.key === "seo_score" || m.key === "articles"
+          ? `Target harian: minimal ${formatValue(seoTargets.find((t) => t.key === m.key)?.dailyTarget ?? (m.key === "seo_score" ? 85 : 1), "number")}`
+          : "Isi jumlah hari ini, bukan total bulanan atau persentase pertumbuhan."}
+      </p>}
+      {m.description && <p className="text-xs text-muted-foreground">{m.description}</p>}
+    </div>
+  );
 
   return (
     <form action={action} className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_380px]">
@@ -71,9 +125,9 @@ export function ReportForm({
           </div>
         )}
 
-        <Panel title="KPI Numbers" icon={CalculatorIcon} iconPosition="left" bodyClassName="p-4">
+        <Panel title={seo ? "Laporan Harian SEO" : webmaster ? "Laporan Harian Webmaster" : "KPI Numbers"} icon={CalculatorIcon} iconPosition="left" bodyClassName="p-4">
           <div className="mb-4 grid gap-2 sm:max-w-60">
-            <Label htmlFor="date">Report date</Label>
+            <Label htmlFor="date">{seo || webmaster ? "Tanggal laporan" : "Report date"}</Label>
             <Input
               id="date"
               name="date"
@@ -85,52 +139,27 @@ export function ReportForm({
               required
             />
           </div>
+          {seo && <p className="mb-4 text-sm text-muted-foreground">Isi realisasi pada tanggal laporan. Gunakan 0 jika tidak ada hasil; SEO Score berada di antara 0–100.</p>}
           <div className="grid gap-4 sm:grid-cols-2">
-            {inputs.map((m) => (
-              <div key={m.key} className="grid gap-2">
-                <Label htmlFor={m.key}>
-                  {m.name}
-                  {m.aggregation === "last" && <span className="font-normal text-muted-foreground">(current total)</span>}
-                  {m.aggregation === "avg" && <span className="font-normal text-muted-foreground">(today)</span>}
-                </Label>
-                <div className="relative">
-                  {m.unit === "currency" && (
-                    <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-sm text-muted-foreground">Rp</span>
-                  )}
-                  <Input
-                    id={m.key}
-                    name={`metric_${m.key}`}
-                    type="number"
-                    inputMode="decimal"
-                    min={0}
-                    max={m.unit === "percent" ? 100 : undefined}
-                    step="any"
-                    placeholder="0"
-                    value={values[m.key] ?? ""}
-                    onChange={(e) => setValues((v) => ({ ...v, [m.key]: e.target.value }))}
-                    className={m.unit === "currency" ? "pl-9 tabular-nums" : m.unit === "percent" ? "pr-8 tabular-nums" : "tabular-nums"}
-                    disabled={locked}
-                    required
-                  />
-                  {m.unit === "percent" && (
-                    <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-sm text-muted-foreground">%</span>
-                  )}
-                </div>
-                {m.description && <p className="text-xs text-muted-foreground">{m.description}</p>}
-              </div>
-            ))}
+            {primaryInputs.map(renderInput)}
           </div>
+          {extraInputs.length > 0 && <details className="mt-5 rounded-lg border p-3" open={extraInputs.some((m) => m.value !== null) || undefined}>
+            <summary className="cursor-pointer text-sm font-medium">{webmaster ? "Metrik teknis tambahan (opsional)" : "Metrik SEO tambahan (opsional)"}</summary>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">{extraInputs.map(renderInput)}</div>
+          </details>}
         </Panel>
 
-        <Panel title="Activity Summary" icon={ClipboardPenIcon} iconPosition="left" bodyClassName="grid gap-4 p-4">
+        {webmaster && <WebmasterTasksEditor options={webmasterOptions} snapshots={webmasterSnapshots} locked={locked || pending} historical={date < maxDate} />}
+
+        <Panel title={seo ? "Aktivitas SEO" : webmaster ? "Ringkasan Aktivitas Webmaster" : "Activity Summary"} icon={ClipboardPenIcon} iconPosition="left" bodyClassName="grid gap-4 p-4">
           <div className="grid gap-2">
-            <Label htmlFor="summary">What did you work on today?</Label>
+            <Label htmlFor="summary">{seo || webmaster ? "Aktivitas dan hasil hari ini" : "What did you work on today?"}</Label>
             <Textarea
               id="summary"
               name="summary"
               rows={4}
               defaultValue={existing?.summary}
-              placeholder="e.g. Scaled 2 winning ad sets, launched new retargeting audience…"
+              placeholder={seo ? "Contoh: menerbitkan 1 artikel, memperbaiki meta description, dan memeriksa performa di Search Console…" : webmaster ? "Contoh: menyelesaikan revisi landing page, memperbaiki tracking, dan menunggu review hasil pengujian…" : "e.g. Scaled 2 winning ad sets, launched new retargeting audience…"}
               disabled={locked}
               required
               minLength={10}
@@ -150,6 +179,11 @@ export function ReportForm({
       </div>
 
       <div className="grid content-start gap-3">
+        {seo && <SeoDailyTargets targets={seoTargets} values={Object.fromEntries(SEO_REPORT_KEYS.map((key) => {
+          const raw = values[key]?.trim();
+          const value = raw ? Number(raw) : null;
+          return [key, value !== null && seoValueError(key, value) === null ? value : null];
+        }))} />}
         {derived.length > 0 && (
           <Panel title="Calculated KPI" icon={CalculatorIcon} bodyClassName="divide-y">
             {derived.map((m) => {
@@ -175,7 +209,7 @@ export function ReportForm({
           )}
           <Button type="submit" size="lg" className="w-full" disabled={pending || locked}>
             {pending && <LoaderIcon className="animate-spin" />}
-            {existing ? "Update report" : "Submit report"}
+            {seo ? existing ? "Perbarui laporan SEO" : "Kirim laporan SEO" : webmaster ? existing ? "Perbarui laporan Webmaster" : "Kirim laporan Webmaster" : existing ? "Update report" : "Submit report"}
           </Button>
           <p className="mt-3 text-center text-xs text-muted-foreground">You can edit a report until your supervisor approves it.</p>
         </div>

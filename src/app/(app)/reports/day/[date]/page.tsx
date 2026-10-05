@@ -64,12 +64,12 @@ export default async function ReportDayPage({
       .where(
         and(
           eq(dailyReports.date, date),
-          eq(users.role, "advertiser"),
+          inArray(users.role, ["advertiser", "supervisor"]),
           memberFilter ? eq(dailyReports.userId, memberFilter) : undefined,
         ),
       )
       .orderBy(asc(users.name)),
-    isSupervisor ? getMembers(true).then((m) => m.filter((x) => x.role === "advertiser")) : Promise.resolve([]),
+    isSupervisor ? getMembers(true, true).then((m) => m.filter((x) => x.role === "advertiser" || x.role === "supervisor")) : Promise.resolve([]),
   ]);
   const items = reports.length
     ? await db
@@ -113,8 +113,8 @@ export default async function ReportDayPage({
   const fullDay = sumMetrics(periods.filter((p) => p.key === "previous_day").map((p) => p.total));
   const todayPeriod = periods.find((p) => p.key === "today_to_cutoff")!;
   const today = todayISO();
-  const editable = !isSupervisor && date <= today && date >= addDays(today, -rules.backfillDays) && isAdvertiserReportDay(date);
-  const ownReport = !isSupervisor ? reports[0] : undefined;
+  const editable = memberFilter === user.id && date <= today && date >= addDays(today, -rules.backfillDays) && isAdvertiserReportDay(date);
+  const ownReport = reports.find((report) => report.userId === user.id);
 
   const step = (from: string, dir: 1 | -1) => {
     let d = addDays(from, dir);

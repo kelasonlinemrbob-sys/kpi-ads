@@ -6,6 +6,9 @@ import { db } from "@/db";
 import { adAccounts } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { roleSlots } from "@/lib/member-roles";
+import { getGoogleConnectionStatus } from "@/lib/google-connection";
+import { GoogleConnectGuide } from "@/components/google-connect-guide";
+import { GoogleConnectionCard } from "./google-connection-card";
 import { getMetaConnectionStatus } from "@/lib/meta-connection";
 import { getReportRules } from "@/lib/report-rules";
 import { can, ROLE_LABEL, roleLabel } from "@/lib/roles";
@@ -40,7 +43,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             key: "integrasi",
             label: "Integrasi",
             icon: PlugIcon,
-            description: user.role === "advertiser" ? "WhatsApp laporan dan koneksi Meta Ads." : "Koneksi Meta Ads untuk Generate & Sinkron dari Ads.",
+            description: can.runAds(user.role) ? "WhatsApp laporan serta koneksi Meta dan Google Ads." : "Koneksi Meta dan Google Ads untuk Generate & Sinkron dari Ads.",
           },
         ]
       : []),
@@ -82,7 +85,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               name={user.name}
               title={user.title}
               email={user.email}
-              roles={roleSlots(user).map((slot, i) =>
+              roles={supervisor ? ["Supervisor", "Operasional iklan"] : roleSlots(user).map((slot, i) =>
                 i === 0
                   ? `${roleLabel(slot.role, user.advertiserLevel)}${slot.share < 100 ? ` · ${slot.share}%` : ""}`
                   : `${ROLE_LABEL[slot.role]} · ${slot.share}%`,
@@ -104,11 +107,13 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   );
 }
 
-async function Integrations({ userRole }: { userRole: string }) {
-  const [metaStatus, metaAccounts, wa] = await Promise.all([
+async function Integrations({ userRole }: { userRole: import("@/db/schema").Role }) {
+  const [metaStatus, metaAccounts, wa, googleStatus, googleAccounts] = await Promise.all([
     getMetaConnectionStatus(),
     db.select({ accountId: adAccounts.accountId }).from(adAccounts).where(eq(adAccounts.platform, "meta")),
-    userRole === "advertiser" ? getWhatsAppStatus() : Promise.resolve(null),
+    can.runAds(userRole) ? getWhatsAppStatus() : Promise.resolve(null),
+    getGoogleConnectionStatus(),
+    db.select({ accountId: adAccounts.accountId }).from(adAccounts).where(eq(adAccounts.platform, "google")),
   ]);
   return (
     <>
@@ -117,6 +122,9 @@ async function Integrations({ userRole }: { userRole: string }) {
           <WhatsAppCard initial={wa} />
         </div>
       )}
+      <div id="google-ads" className="scroll-mt-4">
+        <GoogleConnectionCard status={googleStatus} canManage={userRole === "supervisor"} registeredAccountIds={googleAccounts.map((a) => a.accountId)} guide={<GoogleConnectGuide />} />
+      </div>
       <div id="meta-ads" className="scroll-mt-4">
         <MetaConnectionCard
           status={metaStatus}

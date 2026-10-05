@@ -40,7 +40,7 @@ export default async function ScorecardPage({ searchParams }: { searchParams: Pr
   const user = await requireUser();
   const sp = await searchParams;
   const { period, options } = resolvePeriod(sp.period);
-  const allMembers = await getMembers();
+  const allMembers = await getMembers(false, true);
   const members = user.role === "supervisor" ? allMembers : [];
   const target =
     user.role === "supervisor"
@@ -82,7 +82,7 @@ export default async function ScorecardPage({ searchParams }: { searchParams: Pr
   // A dual-role member gets a combined view plus one view per role (?role=).
   const slots = roleSlots(target);
   const dual = slots.length > 1;
-  const view: Role | "all" = dual ? (slots.find((s) => s.role === sp.role)?.role ?? "all") : target.role;
+  const view: Role | "all" = dual ? (slots.find((s) => s.role === sp.role)?.role ?? "all") : slots[0]!.role;
   const peerRole = view === "all" ? target.role : view;
   const scoreOf = (c: Scorecard) => (view === "all" ? c.score : scoreForRole(c, view));
 

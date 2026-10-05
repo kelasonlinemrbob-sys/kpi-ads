@@ -1,0 +1,23 @@
+[Unit]
+Description=KPI Ads web application
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=kpiads
+Group=kpiads
+WorkingDirectory=/srv/kpiads/current
+ExecStart=/usr/local/bin/node --env-file=/srv/kpiads/shared/.env node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3000
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/kpiads
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

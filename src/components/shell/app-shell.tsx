@@ -190,7 +190,7 @@ function useIsActive() {
       const q = new URLSearchParams(query);
       return pathname === path && [...q].every(([k, v]) => search.get(k) === v);
     }
-    if (exact) return pathname === path && !search.get("status");
+    if (exact) return pathname === path && !search.get("status") && !search.get("view");
     return pathname === path || pathname.startsWith(`${path}/`);
   };
 }

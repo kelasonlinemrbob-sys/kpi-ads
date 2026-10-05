@@ -5,11 +5,12 @@ import QRCode from "qrcode";
 import { db } from "@/db";
 import { dailyReports, waOutbox, waSessions } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
+import { can } from "@/lib/roles";
 import { buildReportMessage, isWorkerAlive } from "@/lib/whatsapp";
 
 async function requireAdvertiser() {
   const user = await requireUser();
-  if (user.role !== "advertiser") throw new Error("Hanya advertiser yang dapat menghubungkan WhatsApp.");
+  if (!can.runAds(user.role)) throw new Error("Hanya advertiser yang dapat menghubungkan WhatsApp.");
   return user;
 }
 

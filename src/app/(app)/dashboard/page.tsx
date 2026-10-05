@@ -37,6 +37,7 @@ import { advertiserReportDeadlinePassed, formatCutoff, isAdvertiserReportDay } f
 import { getReportRules } from "@/lib/report-rules";
 import { resolvePeriod } from "@/lib/period";
 import { hasSecondRole, memberRoles, reportsMondayToFriday, roleSlots } from "@/lib/member-roles";
+import { TabLink } from "../campaigns/ad-campaigns-table";
 import { ROLE_LABEL } from "@/lib/roles";
 import { formatDate, formatNumber, formatValue } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -60,7 +61,9 @@ export const metadata: Metadata = { title: "Dashboard" };
 const HEADLINE: Record<Exclude<Role, "supervisor">, { key: string; icon: LucideIcon }[]> = {
   advertiser: [
     { key: "leads", icon: MousePointerClickIcon },
-    { key: "roas", icon: BadgeDollarSignIcon },
+    { key: "ad_spend", icon: BadgeDollarSignIcon },
+    { key: "cpl", icon: BadgeDollarSignIcon },
+    { key: "cplv", icon: MousePointerClickIcon },
   ],
   webmaster: [
     { key: "landing_pages", icon: RocketIcon },
@@ -80,7 +83,9 @@ const TEAM_TREND_KEYS = ["leads", "closing", "revenue", "ad_spend", "landing_pag
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const user = await requireUser();
-  const { period, options } = resolvePeriod((await searchParams).period);
+  const sp = await searchParams;
+  const { period, options } = resolvePeriod(sp.period);
+  const personal = user.role !== "supervisor" || sp.view === "ads";
   const firstName = user.name.split(" ")[0];
 
   return (
@@ -88,13 +93,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       <PageHeader
         title={<>Hello, {firstName} 👋</>}
         description={
-          user.role === "supervisor"
-            ? "Here are the latest insights from your advertising team."
-            : "Here's how your KPI is tracking this period."
+          personal
+            ? "Pantau target, performa produk, dan laporan harianmu bulan ini."
+            : "Pantau performa dan laporan tim, atau buka Iklan Saya untuk iklan pribadi."
         }
         actions={
           <>
             <PeriodSelect value={period} options={options} />
+            {personal && <Button asChild className="h-8"><Link href="/reports/new"><ClipboardPenIcon /> Isi laporan</Link></Button>}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="icon" className="size-8" aria-label="More actions">
@@ -103,7 +109,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem asChild>
-                  <a href={`/api/export?period=${period}`}>
+                  <a href={`/api/export?period=${period}${personal ? "&scope=mine" : ""}`}>
                     <DownloadIcon /> Export scorecard (CSV)
                   </a>
                 </DropdownMenuItem>
@@ -117,7 +123,21 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           </>
         }
       />
-      {user.role === "supervisor" ? <SupervisorDashboard user={user} period={period} /> : <MemberDashboard user={user} period={period} />}
+      {user.role === "supervisor" && (
+        <div className="mb-3 inline-flex rounded-lg bg-muted p-1">
+          <TabLink href={`/dashboard?period=${period}`} active={!personal}>Dashboard Tim</TabLink>
+          <TabLink href={`/dashboard?view=ads&period=${period}`} active={personal}>Iklan Saya</TabLink>
+        </div>
+      )}
+      {personal && user.role === "supervisor" && (
+        <div className="mb-4 flex flex-wrap gap-2">
+          <Button asChild variant="outline" size="sm"><Link href="/campaigns?tab=products&owner=me">Produk Saya</Link></Button>
+          <Button asChild variant="outline" size="sm"><Link href="/campaigns?owner=me">Campaign Saya</Link></Button>
+          <Button asChild variant="outline" size="sm"><Link href="/reports?view=mine">Laporan Iklan Saya</Link></Button>
+          <Button asChild variant="outline" size="sm"><Link href={`/scorecard?user=${user.id}&period=${period}`}>KPI Saya</Link></Button>
+        </div>
+      )}
+      {personal ? <MemberDashboard user={user} period={period} /> : <SupervisorDashboard user={user} period={period} />}
     </>
   );
 }
@@ -145,8 +165,8 @@ async function SupervisorDashboard({ user, period }: { user: SessionUser; period
   const [metrics, scorecards, entries, prevEntries, teamSeries, feed, todayReports] = await Promise.all([
     getMetrics(),
     getScorecards(period, members),
-    getEntries(start, asOf),
-    getEntries(prev.start, prev.end),
+    getEntries(start, asOf, members.map((m) => m.id)),
+    getEntries(prev.start, prev.end, members.map((m) => m.id)),
     getTeamScoreSeries(period, members),
     getActivities(user),
     db.select({ userId: dailyReports.userId }).from(dailyReports).where(eq(dailyReports.date, todayISO())),
@@ -225,7 +245,7 @@ async function SupervisorDashboard({ user, period }: { user: SessionUser; period
 }
 
 async function MemberDashboard({ user, period }: { user: SessionUser; period: string }) {
-  const role = user.role as Exclude<Role, "supervisor">;
+  const role = (user.role === "supervisor" ? "advertiser" : user.role) as Exclude<Role, "supervisor">;
   const asOf = periodAsOf(period);
   const { start } = periodRange(period);
   const prev = comparableRange(period, asOf);
@@ -245,7 +265,7 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
     getEntries(start, asOf, [user.id]),
     getEntries(prev.start, prev.end, [user.id]),
     getTeamScoreSeries(period, [me]),
-    getActivities(user),
+    getActivities(user, 60, true),
     db
       .select({ id: dailyReports.id, status: dailyReports.status })
       .from(dailyReports)
@@ -295,7 +315,7 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
             </Button>
           </div>
         )}
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className={`grid gap-3 sm:grid-cols-2 ${role === "advertiser" ? "2xl:grid-cols-5" : "md:grid-cols-3"}`}>
           <StatCard
             title={hasSecondRole(user) ? `My KPI Score (${roleSlots(user).map((r) => `${r.share}%`).join(" + ")})` : "My KPI Score"}
             icon={GaugeIcon}

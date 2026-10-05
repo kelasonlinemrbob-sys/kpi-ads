@@ -5,6 +5,8 @@ import { db } from "@/db";
 import { advertiserReportItems, campaigns, dailyReports, kpiEntries } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { getItemCampaigns, getMetrics } from "@/lib/data";
+import { getWebmasterTaskOptions } from "@/lib/webmaster-report-data";
+import { getSeoDailyTargets } from "@/lib/seo-report-data";
 import { todayISO } from "@/lib/kpi";
 import { advertiserReportWindows, formatCutoff, isAdvertiserReportDay, latestAdvertiserReportDate } from "@/lib/reporting";
 import { getReportRules } from "@/lib/report-rules";
@@ -24,7 +26,6 @@ export default async function NewReportPage({
   searchParams: Promise<{ date?: string; window?: string; role?: string }>;
 }) {
   const user = await requireUser();
-  if (user.role === "supervisor") redirect("/reports");
   const today = todayISO();
   const rules = await getReportRules();
   const cut = formatCutoff(rules.cutoff);
@@ -134,6 +135,7 @@ export default async function NewReportPage({
             impressions: item.impressions,
             clicks: item.clicks,
             leads: item.leads,
+            landingPageViews: item.landingPageViews,
             campaigns: (itemCampaigns.get(item.id) ?? []).map((c) => ({
               id: c.externalId,
               name: c.name,
@@ -141,6 +143,7 @@ export default async function NewReportPage({
               impressions: c.impressions,
               clicks: c.clicks,
               leads: c.leads,
+              landingPageViews: c.landingPageViews,
             })),
           }))}
         />
@@ -149,23 +152,28 @@ export default async function NewReportPage({
   }
 
   const metrics = (await getMetrics()).filter((metric) => metric.role === role);
+  const webmasterOptions = role === "webmaster" ? await getWebmasterTaskOptions(user, date) : [];
+  const seoTargets = role === "seo" ? await getSeoDailyTargets(user.id, date) : [];
   const values = existing ? await db.select().from(kpiEntries).where(eq(kpiEntries.reportId, existing.id)) : [];
 
   return (
     <>
       <PageHeader
-        title={existing ? "Edit Daily Report" : "Submit Daily Report"}
+        title={role === "seo" ? existing ? "Edit Laporan Harian SEO" : "Laporan Harian SEO" : role === "webmaster" ? existing ? "Edit Laporan Harian Webmaster" : "Laporan Harian Webmaster" : existing ? "Edit Daily Report" : "Submit Daily Report"}
         description={
           dualRole
             ? `Isi angka KPI ${ROLE_LABEL[role]} hari ini. Bagian ini masuk ke laporan harian yang sama dengan role lainnya dan direview supervisor.`
-            : "Enter today's numbers and a short summary. Your KPI score updates as soon as you submit."
+            : role === "seo" ? "Laporkan SEO Score, artikel, impression, dan klik hari ini. Pantau pencapaian target sebelum mengirim." : role === "webmaster" ? "Catat task harian, status pengerjaan, kategori, dan hasil pekerjaan. Target penyelesaian task 100%." : "Enter today's numbers and a short summary. Your KPI score updates as soon as you submit."
         }
       />
       {roleTabs}
       <ReportForm
         role={role}
+        seoTargets={seoTargets}
+        webmasterOptions={webmasterOptions}
+        webmasterSnapshots={existing?.webmasterTasks ?? []}
         dualRole={dualRole}
-        key={date}
+        key={`${role}-${date}`}
         date={date}
         minDate={minDate}
         maxDate={today}

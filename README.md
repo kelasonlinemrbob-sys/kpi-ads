@@ -40,6 +40,15 @@ Aturan di `src/lib/task-rules.ts`, dipakai server (validasi) dan UI (pilihan yan
 - Scope board: *Menunggu review saya*, *Tim advertiser junior* (Senior), filter role (Supervisor) dan filter kategori.
   Badge menu Tasks = tugas terbuka + tugas yang menunggu persetujuanmu.
 
+## Laporan harian Webmaster
+
+- Pilih task yang ditugaskan, muat task aktif sekaligus, atau buat task baru untuk diri sendiri dari laporan.
+- Catat status, kategori, prioritas, tenggat, durasi, catatan pekerjaan/kendala, dan tautan hasil. Metrik teknis tambahan bersifat opsional.
+- Saat laporan hari ini dikirim, status task ikut diperbarui di Tasks. Task dari orang lain harus melalui Review; Done disetujui pemberi tugas atau supervisor.
+- Riwayat task tersimpan di laporan, termasuk ketika task diubah atau dihapus. Mengedit laporan tanggal lampau tidak menimpa status terbaru di Tasks.
+- Persentase harian memakai task yang dicantumkan; KPI bulanan tetap menghitung seluruh task dalam cakupan bulan. Mengeluarkan task dari laporan tidak menghapus task tersebut.
+- Jalankan migrasi `0019_webmaster_daily_tasks` sebelum memakai fitur. Uji aturan dengan `npm run test:kpi`; uji database dengan `npm run test:webmaster:integration` (data pengujian di-rollback).
+
 ## Creative (konten iklan Meta)
 
 Role **Creative** (tambah di Team → Members) punya KPI sendiri (Konten Diproduksi, Konten Tayang, Konten Winning) dan menu

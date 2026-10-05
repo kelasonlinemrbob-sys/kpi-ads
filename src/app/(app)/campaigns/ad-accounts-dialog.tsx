@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowRightIcon, LoaderIcon, PlugIcon, Trash2Icon, TriangleAlertIcon } from "lucide-react";
 import { toast } from "sonner";
-import { deleteAdAccount, saveAdAccount } from "@/actions/ad-accounts";
+import { deleteAdAccount, saveAdAccount, getLpvConversionOptions, saveLpvConversion } from "@/actions/ad-accounts";
 import { PLATFORM_DOT, PLATFORM_LABEL } from "@/lib/labels";
 import type { MetaConnectionStatus } from "@/lib/meta-connection";
 import { cn } from "@/lib/utils";
@@ -88,6 +88,12 @@ export function AdAccountsDialog({
           </div>
         </div>
 
+        <div className="grid gap-1 rounded-lg border p-3 text-sm">
+          <p className="font-medium">Koneksi Google Ads</p>
+          <p className="text-xs text-muted-foreground">Isi Client ID, Client Secret, Refresh Token, dan MCC ID bila diperlukan. Tutorial lengkap tersedia di Settings.</p>
+          <Link href="/settings?tab=integrasi#google-ads" className="inline-flex items-center gap-1 text-xs font-medium underline underline-offset-2">Cara connect Google Ads &amp; isi kredensial <ArrowRightIcon className="size-3" /></Link>
+        </div>
+
         <div className="divide-y rounded-lg border">
           {accounts.length === 0 && <p className="p-4 text-sm text-muted-foreground">Belum ada akun iklan.</p>}
           {accounts.map((account) => (
@@ -99,6 +105,7 @@ export function AdAccountsDialog({
                   {PLATFORM_LABEL[account.platform]} · {account.platform === "meta" ? `act_${account.accountId}` : account.accountId} ·{" "}
                   {productCount[account.id] ?? 0} product
                 </p>
+                {account.platform === "google" && deletableIds.includes(account.id) && <GoogleLpvConfig account={account} />}
                 {syncErrors[account.id] && <p className="mt-0.5 text-xs text-destructive">{syncErrors[account.id]}</p>}
               </div>
               {deletableIds.includes(account.id) && (
@@ -137,4 +144,37 @@ export function AdAccountsDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+
+function GoogleLpvConfig({ account }: { account: AdAccountOption }) {
+  const [options, setOptions] = React.useState<{ resourceName: string; name: string; category: string }[] | null>(null);
+  const [value, setValue] = React.useState(account.lpvConversionAction ?? "");
+  const [pending, start] = React.useTransition();
+  const router = useRouter();
+  const load = () => start(async () => {
+    const result = await getLpvConversionOptions(account.id);
+    if (!result.ok) return void toast.error(result.error);
+    setOptions(result.actions);
+  });
+  const save = () => start(async () => {
+    const result = await saveLpvConversion(account.id, value);
+    if (result.error) return void toast.error(result.error);
+    toast.success("Sumber LPV disimpan. Generate ulang laporan untuk mengambil datanya.");
+    router.refresh();
+  });
+  return <div className="mt-2 grid gap-2">
+    <p className="text-xs text-muted-foreground">{account.lpvConversionAction ? "LPV otomatis terhubung ke konversi Google Ads." : "LPV otomatis belum diatur."}</p>
+    <Button type="button" size="sm" variant="outline" disabled={pending} onClick={load}>Pilih konversi LPV</Button>
+    {options && <>
+      <p className="text-xs text-muted-foreground">Pilih satu event yang menghitung kunjungan landing page dari iklan, misalnya event LPV dari Google tag atau GA4. Jangan pilih event lead atau kunjungan semua halaman.</p>
+      <select aria-label={`Konversi LPV ${account.name}`} value={value} onChange={(e) => setValue(e.target.value)} disabled={pending} className="h-9 w-full min-w-0 rounded-md border bg-background px-2 text-sm">
+        <option value="">Belum ada / input manual</option>
+        {value && !options.some((o) => o.resourceName === value) && <option value={value}>Konversi tersimpan tidak tersedia — pilih ulang</option>}
+        {options.map((o) => <option key={o.resourceName} value={o.resourceName}>{o.name} · {o.category}</option>)}
+      </select>
+      {!options.length && <p className="text-xs text-warning">Belum ada konversi aktif. Siapkan tracking LPV di Google Ads terlebih dahulu.</p>}
+      <Button type="button" size="sm" disabled={pending} onClick={save}>{pending && <LoaderIcon className="animate-spin" />}Simpan sumber LPV</Button>
+    </>}
+  </div>;
 }

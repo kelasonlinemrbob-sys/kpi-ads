@@ -49,7 +49,8 @@ export default async function GuidePage() {
                           {!m.higherIsBetter && " · lower is better"}
                         </TableCell>
                         <TableCell className="text-right align-top tabular-nums">
-                          {m.defaultTarget === null ? "—" : formatValue(m.defaultTarget, m.unit)}
+                          {m.defaultTarget === null ? "—" : formatValue(m.defaultTarget, m.targetMode === "growth" ? "percent" : m.unit)}
+                          {m.targetMode === "daily" ? " / hari" : m.targetMode === "growth" ? " / bulan" : ""}
                         </TableCell>
                         <TableCell className="text-right align-top tabular-nums">{m.weight ? `${m.weight}%` : "tracked"}</TableCell>
                       </TableRow>
@@ -70,6 +71,15 @@ export default async function GuidePage() {
           </p>
           <p>
             <strong>3. Weighted score.</strong> Achievements are averaged using each KPI&apos;s weight. 100 means exactly on target.
+          </p>
+          <p>
+            Target artikel diisi per hari kalender dan dikalikan jumlah hari dalam bulan. Target pertumbuhan impression / klik
+            diisi dalam persen: total bulan sebelumnya × (1 + target / 100). Tanpa baseline positif, KPI pertumbuhan belum dinilai.
+          </p>
+          <p>
+            CPR = spend ÷ chat / result; CPLV = spend ÷ landing page views. LPV diisi manual dari Ads pada laporan advertiser.
+            Data LPV yang belum lengkap tidak dinilai. Penyelesaian task Webmaster dihitung otomatis dari status Done,
+            termasuk backlog dan task tanpa tenggat, dengan target 100%.
           </p>
           <div className="grid gap-2 rounded-xl border bg-muted/40 p-4">
             <span className="flex justify-between">

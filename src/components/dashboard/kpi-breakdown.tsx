@@ -62,7 +62,7 @@ export function KpiBreakdownTable({
               <TableCell className="text-right text-muted-foreground tabular-nums">{r.expected === null ? "–" : formatValue(unit === "number" && r.metric.aggregation === "sum" ? Math.round(r.expected) : r.expected, unit)}</TableCell>
               <TableCell>
                 {pct === null ? (
-                  <span className="text-sm text-muted-foreground">No target</span>
+                  <span className="text-sm text-muted-foreground">{r.metric.targetMode === "growth" && r.target === null ? "Belum ada baseline" : r.actual === null && r.target !== null ? "Belum ada data" : "No target"}</span>
                 ) : (
                   <span className="flex items-center gap-2.5">
                     {mono ? (

@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
@@ -11,7 +11,10 @@ import { logActivity } from "@/lib/data";
 import { memberRoles, needsReview } from "@/lib/member-roles";
 import { todayISO } from "@/lib/kpi";
 import { getReportRules } from "@/lib/report-rules";
+import { isSeoReportKey, seoValueError } from "@/lib/seo-report";
 import { addDays, formatDate } from "@/lib/utils";
+import { webmasterItemsSchema, type WebmasterItemInput } from "@/lib/webmaster-report";
+import { saveWebmasterTaskItems, WebmasterReportError } from "@/lib/webmaster-report-data";
 import { saveAdvertiserReport } from "./advertiser-report";
 import type { FormState } from "./auth";
 
@@ -25,9 +28,8 @@ const reportSchema = z.object({
 
 export async function saveReport(_: FormState, formData: FormData): Promise<FormState> {
   const user = await requireUser();
-  if (user.role === "supervisor") return { error: "Supervisors don't submit daily reports." };
   // Dual-role members submit each role's part separately; both land on the same daily report.
-  const requestedRole = String(formData.get("role") ?? user.role);
+  const requestedRole = String(formData.get("role") ?? memberRoles(user)[0]);
   const role = memberRoles(user).find((r) => r === requestedRole);
   if (!role) return { error: "Role laporan tidak valid." };
   if (role === "advertiser") return saveAdvertiserReport(user, formData);
@@ -46,64 +48,95 @@ export async function saveReport(_: FormState, formData: FormData): Promise<Form
   if (date > today) return { error: "You can't report for a future date." };
   if (date < addDays(today, -backfillDays)) return { error: `Laporan hanya bisa diisi mundur maksimal ${backfillDays} hari.` };
 
+  let webmasterItems: WebmasterItemInput[] = [];
+  if (role === "webmaster") {
+    let rawItems: unknown;
+    try { rawItems = JSON.parse(String(formData.get("webmasterItems"))); }
+    catch { return { error: "Data task tidak valid. Muat ulang laporan." }; }
+    const parsedItems = webmasterItemsSchema.safeParse(rawItems);
+    if (!parsedItems.success) return { error: parsedItems.error.issues[0]?.message };
+    webmasterItems = parsedItems.data;
+  }
+
   const roleMetrics = await db.select().from(kpiMetrics).where(eq(kpiMetrics.role, role));
-  const metrics = roleMetrics.filter((m) => m.aggregation !== "ratio");
+  const metrics = roleMetrics.filter((m) => m.aggregation !== "ratio" && m.key !== "task_completion");
   const values: { metricId: number; value: number }[] = [];
   for (const m of metrics) {
-    const raw = String(formData.get(`metric_${m.key}`) ?? "").replace(/[^\d.,-]/g, "").replace(/,/g, "");
+    const input = String(formData.get(`metric_${m.key}`) ?? "").trim();
+    if ((role === "webmaster" || role === "seo" && !isSeoReportKey(m.key)) && input === "") continue;
+    const raw = role === "seo" ? input : input.replace(/[^\d.,-]/g, "").replace(/,/g, "");
     if (raw === "") return { error: `${m.name} is required (enter 0 if none).` };
     const value = Number(raw);
+    if (role === "seo" && isSeoReportKey(m.key)) {
+      const error = seoValueError(m.key, value);
+      if (error) return { error: `${m.name}: ${error}` };
+    }
     if (!Number.isFinite(value) || value < 0) return { error: `${m.name} must be a positive number.` };
-    if (m.unit === "percent" && value > 100) return { error: `${m.name} can't exceed 100%.` };
+    if ((m.unit === "percent" || m.key === "seo_score") && value > 100) return { error: `${m.name} can't exceed 100%.` };
     values.push({ metricId: m.id, value });
   }
 
-  const [existing] = await db
+  let [existing] = await db
     .select()
     .from(dailyReports)
     .where(and(eq(dailyReports.userId, user.id), eq(dailyReports.date, date)))
     .limit(1);
   if (existing?.status === "approved") return { error: "This report is already approved and can't be edited." };
 
-  const reportId = await db.transaction(async (tx) => {
-    let id: number;
-    if (existing) {
-      await tx
-        .update(dailyReports)
-        .set({
-          summary,
-          blockers,
-          planTomorrow,
-          status: "submitted",
-          reviewerId: null,
-          reviewNote: null,
-          reviewedAt: null,
-          updatedAt: new Date(),
-        })
-        .where(eq(dailyReports.id, existing.id));
-      id = existing.id;
-    } else {
-      const [row] = await tx
-        .insert(dailyReports)
-        .values({ userId: user.id, date, summary, blockers, planTomorrow })
-        .returning({ id: dailyReports.id });
-      id = row!.id;
-    }
-    // Replace this role's numbers only; a dual-role member's other part stays.
-    await tx.delete(kpiEntries).where(
-      and(
-        eq(kpiEntries.reportId, id),
-        inArray(
-          kpiEntries.metricId,
-          roleMetrics.map((m) => m.id),
+  let reportId: number;
+  try {
+    reportId = await db.transaction(async (tx) => {
+      if (role === "webmaster") {
+        await tx.execute(sql`select pg_advisory_xact_lock(${user.id}, ${Number(date.replaceAll("-", ""))})`);
+        [existing] = await tx.select().from(dailyReports).where(and(eq(dailyReports.userId, user.id), eq(dailyReports.date, date))).for("update");
+        if (existing?.status === "approved") throw new WebmasterReportError("Laporan sudah disetujui dan tidak dapat diubah.");
+      }
+      let id: number;
+      if (existing) {
+        await tx
+          .update(dailyReports)
+          .set({
+            summary,
+            blockers,
+            planTomorrow,
+            status: "submitted",
+            reviewerId: null,
+            reviewNote: null,
+            reviewedAt: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(dailyReports.id, existing.id));
+        id = existing.id;
+      } else {
+        const [row] = await tx
+          .insert(dailyReports)
+          .values({ userId: user.id, date, summary, blockers, planTomorrow })
+          .returning({ id: dailyReports.id });
+        id = row!.id;
+      }
+      if (role === "webmaster") {
+        const snapshots = await saveWebmasterTaskItems(tx, user, date, webmasterItems, existing?.webmasterTasks ?? []);
+        await tx.update(dailyReports).set({ webmasterTasks: snapshots }).where(eq(dailyReports.id, id));
+      }
+      // Replace this role's numbers only; a dual-role member's other part stays.
+      await tx.delete(kpiEntries).where(
+        and(
+          eq(kpiEntries.reportId, id),
+          inArray(
+            kpiEntries.metricId,
+            roleMetrics.map((m) => m.id),
+          ),
         ),
-      ),
-    );
-    if (values.length) {
-      await tx.insert(kpiEntries).values(values.map((v) => ({ ...v, reportId: id, userId: user.id, date })));
-    }
-    return id;
-  });
+      );
+      if (values.length) {
+        await tx.insert(kpiEntries).values(values.map((v) => ({ ...v, reportId: id, userId: user.id, date })));
+      }
+      return id;
+    });
+  } catch (error) {
+    if (error instanceof WebmasterReportError) return { error: error.message };
+    throw error;
+  }
 
   await logActivity({
     actorId: user.id,

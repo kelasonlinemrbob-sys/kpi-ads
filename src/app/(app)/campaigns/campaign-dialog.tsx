@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 export type CampaignRow = Omit<Campaign, "createdAt" | "updatedAt"> & { ownerName: string };
 
-export type AdAccountOption = { id: number; platform: Campaign["platform"]; name: string; accountId: string };
+export type AdAccountOption = { lpvConversionAction?: string | null; id: number; platform: Campaign["platform"]; name: string; accountId: string };
 
 export function CampaignDialog({
   campaign,
@@ -51,14 +51,14 @@ export function CampaignDialog({
       {!campaign && (
         <DialogTrigger asChild>
           <Button className="h-8">
-            <PlusIcon /> New campaign
+            <PlusIcon /> Tambah product
           </Button>
         </DialogTrigger>
       )}
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{campaign ? "Edit campaign" : "New campaign"}</DialogTitle>
-          <DialogDescription>Campaign details are visible to the whole team.</DialogDescription>
+          <DialogTitle>{campaign ? "Edit product" : "Tambah product"}</DialogTitle>
+          <DialogDescription>Pilih pemilik product, akun iklan, dan kode product untuk laporan harian.</DialogDescription>
         </DialogHeader>
         <form action={action} className="grid gap-3">
           {campaign && <input type="hidden" name="id" value={campaign.id} />}
