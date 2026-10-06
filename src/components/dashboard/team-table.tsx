@@ -36,6 +36,7 @@ import { EmptyState, Panel } from "./panel";
 export type TeamRow = {
   id: number;
   name: string;
+  avatarId?: number | null;
   email: string;
   role: Role;
   secondaryRole?: Role | null;
@@ -184,7 +185,7 @@ export function TeamTable({
                   <TableRow key={r.id}>
                     <TableCell>
                       <Link href={`/scorecard?user=${r.id}&period=${period}`} className="flex items-center gap-3">
-                        <UserAvatar name={r.name} className="size-7" />
+                        <UserAvatar name={r.name} avatarId={r.avatarId} className="size-7" />
                         <span className="min-w-0">
                           <span className="block truncate font-medium">{r.name}</span>
                           <span className="block truncate text-xs text-muted-foreground">{r.title ?? r.email}</span>

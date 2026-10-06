@@ -162,6 +162,69 @@
       "when": 1791191978540,
       "tag": "0022_creative_period_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791257504726,
+      "tag": "0023_profile_avatar",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791260570916,
+      "tag": "0024_telegram_integration",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1791261453446,
+      "tag": "0025_member_invitations",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1791264343876,
+      "tag": "0026_legacy_report_import",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1791268171530,
+      "tag": "0027_order_forms_cso",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1791270199211,
+      "tag": "0028_order_form_builder",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1791272426599,
+      "tag": "0029_meta_capi_forms",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1791274639787,
+      "tag": "0030_capi_delivery_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1791278349376,
+      "tag": "0031_shared_telegram",
+      "breakpoints": true
     }
   ]
 }

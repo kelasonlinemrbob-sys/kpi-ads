@@ -31,7 +31,7 @@ export default async function GuidePage() {
                   <TableRow className="hover:bg-transparent">
                     <TableHead>KPI</TableHead>
                     <TableHead>How it's measured</TableHead>
-                    <TableHead className="text-right">Default target</TableHead>
+                    <TableHead className="text-right">Nilai awal target</TableHead>
                     <TableHead className="text-right">Weight</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -62,7 +62,7 @@ export default async function GuidePage() {
         </div>
         <Panel title="How the score works" icon={CalculatorIcon} bodyClassName="grid gap-3 p-4 text-sm leading-relaxed">
           <p>
-            <strong>1. Achievement per KPI.</strong> Actual ÷ target (or target ÷ actual when lower is better), capped at{" "}
+            <strong>Target pribadi.</strong> Target disimpan per anggota dan bulan melalui Team → Atur target. Nilai awal di tabel menjadi saran saat pengisian; target pribadi yang sudah disimpan dipakai dalam penilaian. <strong>1. Achievement per KPI.</strong> Actual ÷ target (or target ÷ actual when lower is better), capped at{" "}
             {MAX_ACHIEVEMENT * 100}% so one great KPI can&apos;t hide the others.
           </p>
           <p>

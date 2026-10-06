@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { and, asc, eq, ne } from "drizzle-orm";
 import {
   ClipboardPenIcon,
@@ -59,6 +60,7 @@ import { TrendChart, type TrendSeries } from "@/components/dashboard/trend-chart
 export const metadata: Metadata = { title: "Dashboard" };
 
 const HEADLINE: Record<Exclude<Role, "supervisor">, { key: string; icon: LucideIcon }[]> = {
+  cso: [],
   advertiser: [
     { key: "leads", icon: MousePointerClickIcon },
     { key: "ad_spend", icon: BadgeDollarSignIcon },
@@ -83,6 +85,7 @@ const TEAM_TREND_KEYS = ["leads", "closing", "revenue", "ad_spend", "landing_pag
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const user = await requireUser();
+  if (user.role === "cso") redirect("/leads");
   const sp = await searchParams;
   const { period, options } = resolvePeriod(sp.period);
   const personal = user.role !== "supervisor" || sp.view === "ads";
@@ -189,6 +192,7 @@ async function SupervisorDashboard({ user, period }: { user: SessionUser; period
   const rows: TeamRow[] = scorecards.map((s) => ({
     id: s.member.id,
     name: s.member.name,
+    avatarId: s.member.avatarId,
     email: s.member.email,
     role: s.member.role,
     secondaryRole: s.member.secondaryRole ?? null,
@@ -253,6 +257,7 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
   const me = {
     id: user.id,
     name: user.name,
+    avatarId: user.avatarId,
     email: user.email,
     role: user.role,
     title: user.title,

@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
-import { adAccounts, campaigns, campaignStatusEnum, platformEnum, users } from "@/db/schema";
+import { adAccounts, campaigns, orderForms, campaignStatusEnum, platformEnum, users } from "@/db/schema";
 import { normalizeKeyword } from "@/lib/ads-matching";
 import { requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
@@ -60,7 +60,7 @@ export async function saveCampaign(_: FormState, formData: FormData): Promise<Fo
   if (data.startDate && data.endDate && data.endDate < data.startDate) return { error: "End date must be after start date." };
   if (data.adAccountId) {
     const [account] = await db.select().from(adAccounts).where(eq(adAccounts.id, data.adAccountId)).limit(1);
-    if (!account) return { error: "Akun iklan tidak ditemukan." };
+    if (!account || (user.role !== "supervisor" && account.createdById !== user.id)) return { error: "Akun iklan tidak ditemukan." };
     if (account.platform !== data.platform) return { error: "Platform akun iklan tidak sama dengan platform campaign." };
     if (!data.matchKeyword) return { error: "Isi kode product agar campaign di akun iklan bisa dikenali." };
   }
@@ -73,10 +73,15 @@ export async function saveCampaign(_: FormState, formData: FormData): Promise<Fo
   if (id) {
     const { campaign } = await loadEditable(id);
     if (!campaign) return { error: "Campaign not found." };
-    await db
-      .update(campaigns)
-      .set({ ...data, ownerId: user.role === "supervisor" ? owner : campaign.ownerId, updatedAt: new Date() })
-      .where(eq(campaigns.id, id));
+    const saved = await db.transaction(async (tx) => {
+      const [current] = await tx.select().from(campaigns).where(eq(campaigns.id,id)).for("update");
+      if (!current || (user.role !== "supervisor" && current.ownerId !== user.id)) return {error:"Campaign not found."};
+      const [form] = await tx.select({id:orderForms.id}).from(orderForms).where(eq(orderForms.campaignId,id)).limit(1);
+      if (form && ((user.role === "supervisor" && owner !== current.ownerId) || data.platform !== current.platform)) return {error:"Produk memiliki form order. Pemilik dan platform tidak dapat diubah; buat produk baru."};
+      await tx.update(campaigns).set({...data,ownerId:user.role === "supervisor" ? owner : current.ownerId,updatedAt:new Date()}).where(eq(campaigns.id,id));
+      return {ok:true};
+    });
+    if (saved.error) return saved;
     if (campaign.status !== data.status) {
       await logActivity({
         actorId: user.id,
@@ -121,6 +126,8 @@ export async function setCampaignStatus(id: number, status: (typeof campaignStat
 export async function deleteCampaign(id: number) {
   const { user, campaign } = await loadEditable(id);
   if (!campaign || !can.editCampaigns(user.role)) return { error: "Not allowed" };
+  const [form] = await db.select({id:orderForms.id}).from(orderForms).where(eq(orderForms.campaignId,id)).limit(1);
+  if (form) return {error:"Produk memiliki form order. Nonaktifkan produk untuk mempertahankan riwayat."};
   await db.delete(campaigns).where(eq(campaigns.id, id));
   revalidatePath("/campaigns");
   return { ok: true };

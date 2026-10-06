@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   date,
@@ -15,7 +16,7 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 
-export const roleEnum = pgEnum("role", ["supervisor", "advertiser", "webmaster", "seo", "creative"]);
+export const roleEnum = pgEnum("role", ["supervisor", "advertiser", "webmaster", "seo", "creative", "cso"]);
 export const metricUnitEnum = pgEnum("metric_unit", ["number", "currency", "percent", "ratio"]);
 /** sum = total over the period, avg = daily average, last = latest reported value, ratio = sum(numerator)/sum(denominator) */
 export const aggregationEnum = pgEnum("aggregation", ["sum", "avg", "last", "ratio"]);
@@ -46,7 +47,11 @@ export const users = pgTable("users", {
   /** Share of the combined KPI score that comes from the secondary role (the primary gets the rest). */
   secondaryShare: integer("secondary_share").notNull().default(40),
   title: varchar("title", { length: 120 }),
+  csoPhone: varchar("cso_phone", { length: 20 }),
+  /** Optional preset from the bundled profile-avatar collection. */
+  avatarId: integer("avatar_id"),
   isActive: boolean("is_active").notNull().default(true),
+  invitationPending: boolean("invitation_pending").notNull().default(false),
   /** Bumped to sign the member out everywhere (e.g. after a password change); sessions carry it. */
   sessionVersion: integer("session_version").notNull().default(0),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
@@ -114,6 +119,8 @@ export const dailyReports = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     date: date("date").notNull(),
     summary: text("summary").notNull(),
+    /** Imported historical daily totals retain their source date and are read-only. */
+    source: varchar("source", { length: 20 }).notNull().default("app"),
     blockers: text("blockers"),
     planTomorrow: text("plan_tomorrow"),
     /** Task state at submission time, independent of subsequent edits or deletion on the task board. */
@@ -271,6 +278,7 @@ export const campaigns = pgTable("campaigns", {
   objective: varchar("objective", { length: 80 }),
   product: varchar("product", { length: 120 }),
   dailyBudget: doublePrecision("daily_budget").notNull().default(0),
+  formLeadSince: date("form_lead_since"),
   landingPageUrl: text("landing_page_url"),
   status: campaignStatusEnum("status").notNull().default("active"),
   ownerId: integer("owner_id")
@@ -308,6 +316,8 @@ export const advertiserReportItems = pgTable(
     impressions: integer("impressions").notNull(),
     clicks: integer("clicks").notNull(),
     leads: integer("leads").notNull(),
+    adsLeads: integer("ads_leads"),
+    leadSource: varchar("lead_source", { length: 12 }).notNull().default("ads"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -514,3 +524,142 @@ export const passwordResetLimits = pgTable("password_reset_limits", {
   windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
   attempts: integer("attempts").notNull().default(1),
 });
+
+/** Telegram bot credentials belong to the signed-in advertiser, independently of WhatsApp. */
+export const telegramConnections = pgTable("telegram_connections", {
+  userId: integer("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  token: text("token").notNull(), // AES-GCM encrypted; never returned to the browser.
+  botName: text("bot_name").notNull(),
+  chatId: varchar("chat_id", { length: 40 }).notNull(),
+  chatTitle: text("chat_title").notNull(),
+  threadId: integer("thread_id"),
+  enabled: boolean("enabled").notNull().default(true),
+  autoSend: boolean("auto_send").notNull().default(true),
+  version: integer("version").notNull().default(1),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+/** One team destination; managed by supervisors. Legacy personal connections are retained for audit only. */
+export const sharedTelegramConnection = pgTable("shared_telegram_connection", {
+  id: integer("id").primaryKey(),
+  updatedById: integer("updated_by_id").references(() => users.id, { onDelete: "set null" }),
+  token: text("token").notNull(), // AES-GCM encrypted; never returned to the browser.
+  botName: text("bot_name").notNull(),
+  chatId: varchar("chat_id", { length: 40 }).notNull(),
+  chatTitle: text("chat_title").notNull(),
+  threadId: integer("thread_id"),
+  enabled: boolean("enabled").notNull().default(true),
+  autoSend: boolean("auto_send").notNull().default(true),
+  version: integer("version").notNull().default(1),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export const telegramOutbox = pgTable("telegram_outbox", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  reportId: integer("report_id").references(() => dailyReports.id, { onDelete: "set null" }),
+  connectionVersion: integer("connection_version").notNull(),
+  body: text("body").notNull(),
+  status: varchar("status", { length: 16 }).notNull().default("pending"),
+  manual: boolean("manual").notNull().default(false),
+  nextPart: integer("next_part").notNull().default(0),
+  attempts: integer("attempts").notNull().default(0),
+  error: text("error"),
+  sendAfter: timestamp("send_after", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+}, (t) => [index("telegram_outbox_pending").on(t.status, t.sendAfter), index("telegram_outbox_report").on(t.userId, t.reportId)]);
+export const telegramWorker = pgTable("telegram_worker", {
+  id: integer("id").primaryKey(),
+  heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull(),
+});
+
+/** One current, single-use invitation per pending member; only its SHA-256 digest is stored. */
+export const memberInvitations = pgTable("member_invitations", {
+  userId: integer("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  tokenHash: varchar("token_hash", { length: 64 }).notNull().unique(),
+  email: varchar("email", { length: 180 }).notNull(),
+  invitedById: integer("invited_by_id").references(() => users.id, { onDelete: "set null" }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+  acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  deliveryStatus: varchar("delivery_status", { length: 16 }).notNull().default("pending"),
+});
+
+/** Audit trail for CSV imports; one source row per imported product item. */
+export const legacyReportRows = pgTable("legacy_report_rows", {
+  id: serial("id").primaryKey(),
+  fileHash: varchar("file_hash", { length: 64 }).notNull(),
+  sourceRow: integer("source_row").notNull(),
+  sourceData: jsonb("source_data").$type<Record<string, unknown>>().notNull(),
+  itemId: integer("item_id").notNull().references(() => advertiserReportItems.id, { onDelete: "cascade" }),
+}, (t) => [uniqueIndex("legacy_report_rows_file_row").on(t.fileHash, t.sourceRow), uniqueIndex("legacy_report_rows_item").on(t.itemId)]);
+
+export const orderForms = pgTable("order_forms", {
+  id: serial("id").primaryKey(), slug: varchar("slug", { length: 32 }).notNull().unique(),
+  ownerId: integer("owner_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  campaignId: integer("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+  title: varchar("title", { length: 120 }).notNull(), description: text("description").notNull().default(""),
+  fields: jsonb("fields").$type<import("@/lib/order-form-input").OrderFields>().notNull(),
+  appearance: jsonb("appearance").$type<import("@/lib/order-form-config").FormAppearance>().notNull().default(sql`'{}'::jsonb`),
+  tracking: jsonb("tracking").$type<import("@/lib/order-form-config").FormTracking>().notNull().default(sql`'{}'::jsonb`),
+  weights: jsonb("weights").$type<Record<string,number>>().notNull().default({}),
+  routingCredits: jsonb("routing_credits").$type<Record<string,number>>().notNull().default({}),
+  routing: varchar("routing", { length: 20 }).notNull().default("fixed"),
+  assigneeIds: jsonb("assignee_ids").$type<number[]>().notNull().default([]),
+  cursor: integer("cursor").notNull().default(0), published: boolean("published").notNull().default(false),
+  source: varchar("source", { length: 12 }).notNull().default("ads"),
+  message: text("message").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export const orderLeads = pgTable("order_leads", {
+  id: serial("id").primaryKey(), publicId: varchar("public_id", { length: 36 }).notNull().unique(),
+  formId: integer("form_id").notNull().references(() => orderForms.id, { onDelete: "restrict" }),
+  ownerId: integer("owner_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  campaignId: integer("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+  assigneeId: integer("assignee_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  csoPhone: varchar("cso_phone", { length: 20 }).notNull(),
+  product: varchar("product", { length: 120 }).notNull(), source: varchar("source", { length: 12 }).notNull(),
+  platform: varchar("platform", { length: 20 }).notNull(),
+  name: varchar("name", { length: 120 }), phone: varchar("phone", { length: 20 }),
+  email: varchar("email", { length: 180 }), city: varchar("city", { length: 120 }),
+  date: date("date").notNull(), status: varchar("status", { length: 20 }).notNull().default("new"),
+  paymentStatus: varchar("payment_status", { length: 16 }).notNull().default("unpaid"),
+  revenue: doublePrecision("revenue").notNull().default(0),
+  followUpStep: integer("follow_up_step").notNull().default(0),
+  followUpAt: timestamp("follow_up_at", { withTimezone: true }),
+  notes: text("notes").notNull().default(""), attribution: jsonb("attribution").$type<Record<string,string>>().notNull().default({}),
+  measurementConsent: boolean("measurement_consent").notNull().default(false),
+  metaTracking: jsonb("meta_tracking").$type<{event?:string;pixelIds?:string[]}>().notNull().default({}),
+  requestHash: varchar("request_hash", { length: 64 }).notNull(),
+  contactHash: varchar("contact_hash", { length: 64 }).notNull(),
+  whatsappUrl: text("whatsapp_url").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("order_leads_form_request").on(t.formId, t.requestHash), uniqueIndex("order_leads_form_contact_day").on(t.formId,t.date,t.contactHash), index("order_leads_owner_date").on(t.ownerId,t.date), index("order_leads_assignee_date").on(t.assigneeId,t.date), index("order_leads_campaign_date").on(t.campaignId,t.date)]);
+export const orderLeadEvents = pgTable("order_lead_events", {
+  id: serial("id").primaryKey(), leadId: integer("lead_id").notNull().references(() => orderLeads.id, { onDelete: "cascade" }),
+  actorId: integer("actor_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  detail: text("detail").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Tokens are separate from order_forms so form DTOs never contain credentials. */
+export const orderFormCapi = pgTable("order_form_capi", {
+ formId: integer("form_id").primaryKey().references(()=>orderForms.id,{onDelete:"cascade"}),
+ pixelId: varchar("pixel_id",{length:25}).notNull(), token: text("token").notNull(),
+ enabled: boolean("enabled").notNull().default(false), version: varchar("version",{length:36}).notNull(),
+ testSucceeded: boolean("test_succeeded"), testStatus: text("test_status"), testedAt: timestamp("tested_at",{withTimezone:true}),
+ updatedAt: timestamp("updated_at",{withTimezone:true}).notNull().defaultNow(),
+});
+export const metaCapiOutbox = pgTable("meta_capi_outbox", {
+ id: serial("id").primaryKey(), formId: integer("form_id").notNull().references(()=>orderForms.id,{onDelete:"cascade"}),
+ leadId: integer("lead_id").notNull().references(()=>orderLeads.id,{onDelete:"cascade"}),
+ eventId: varchar("event_id",{length:36}).notNull().unique(), eventName: varchar("event_name",{length:40}).notNull(),
+ pixelId: varchar("pixel_id",{length:25}).notNull(), configVersion: varchar("config_version",{length:36}).notNull(),
+ payload: text("payload").notNull(), status: varchar("status",{length:20}).notNull().default("pending"),
+ attempts: integer("attempts").notNull().default(0), lastError: text("last_error"),
+ errorCode: integer("error_code"), traceId: varchar("trace_id",{length:100}),
+ nextAttemptAt: timestamp("next_attempt_at",{withTimezone:true}).notNull().defaultNow(),
+ sentAt: timestamp("sent_at",{withTimezone:true}), createdAt: timestamp("created_at",{withTimezone:true}).notNull().defaultNow(),
+},t=>[index("meta_capi_due").on(t.status,t.nextAttemptAt)]);

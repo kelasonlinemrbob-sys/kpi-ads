@@ -3,9 +3,11 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { EllipsisVerticalIcon, GaugeIcon, PencilIcon, PowerIcon, UsersIcon } from "lucide-react";
+import { MailIcon, XCircleIcon, EllipsisVerticalIcon, GaugeIcon, PencilIcon, PowerIcon, TargetIcon, UsersIcon } from "lucide-react";
 import { toast } from "sonner";
+import { resendInvitationAction, revokeInvitationAction } from "@/actions/invitations";
 import { setMemberActive } from "@/actions/team";
+import type { KpiMetric } from "@/db/schema";
 import type { KpiStatus } from "@/lib/kpi";
 import { ROLE_BADGE, ROLE_LABEL, roleLabel } from "@/lib/roles";
 import { cn, formatNumber } from "@/lib/utils";
@@ -18,11 +20,23 @@ import { Panel } from "@/components/dashboard/panel";
 import { UserAvatar } from "@/components/user-avatar";
 import { MemberDialog, type EditableMember } from "./member-dialog";
 
-export type MemberRow = EditableMember & { lastLoginAt: string | null; score: number | null; status: KpiStatus | null };
+export type MemberRow = EditableMember & { invitationStatus: string | null; inviteExpiresAt: string | null; inviteRevokedAt: string | null; lastLoginAt: string | null; score: number | null; status: KpiStatus | null };
 
-export function MembersTable({ rows }: { rows: MemberRow[] }) {
+export function MembersTable({ rows, metrics, period }: { rows: MemberRow[]; metrics: KpiMetric[]; period: string }) {
   const router = useRouter();
   const [editing, setEditing] = React.useState<MemberRow | null>(null);
+
+  const [busy, setBusy] = React.useState<number | null>(null);
+  const invitationAction = async (id: number, revoke: boolean) => {
+    setBusy(id);
+    try {
+      const res = await (revoke ? revokeInvitationAction(id) : resendInvitationAction(id));
+      if (res?.error) toast.error(res.error);
+      else toast.success(res?.message);
+      router.refresh();
+    } catch { toast.error("Undangan belum dapat diproses. Coba lagi nanti."); }
+    finally { setBusy(null); }
+  };
 
   return (
     <Panel title={`${rows.length} people`} icon={UsersIcon} iconPosition="left">
@@ -33,7 +47,8 @@ export function MembersTable({ rows }: { rows: MemberRow[] }) {
               <TableHead>Member</TableHead>
               <TableHead>Role</TableHead>
               <TableHead>Access</TableHead>
-              <TableHead className="text-right">KPI (this month)</TableHead>
+              <TableHead>Target bulanan</TableHead>
+              <TableHead className="text-right">KPI ({period})</TableHead>
               <TableHead>KPI Status</TableHead>
               <TableHead>Last login</TableHead>
               <TableHead className="w-10">
@@ -43,10 +58,10 @@ export function MembersTable({ rows }: { rows: MemberRow[] }) {
           </TableHeader>
           <TableBody>
             {rows.map((m) => (
-              <TableRow key={m.id} className={m.isActive ? undefined : "opacity-60"}>
+              <TableRow key={m.id} className={m.isActive || m.invitationPending ? undefined : "opacity-60"}>
                 <TableCell>
                   <span className="flex items-center gap-3">
-                    <UserAvatar name={m.name} className="size-8" />
+                    <UserAvatar name={m.name} avatarId={m.avatarId} className="size-8" />
                     <span>
                       <span className="block font-medium">
                         {m.name} {m.isSelf && <span className="text-xs font-normal text-muted-foreground">(you)</span>}
@@ -67,15 +82,16 @@ export function MembersTable({ rows }: { rows: MemberRow[] }) {
                   {m.title && <span className="mt-1 block text-xs text-muted-foreground">{m.title}</span>}
                 </TableCell>
                 <TableCell>
-                  {m.isActive ? <Badge variant="success">Active</Badge> : <Badge variant="secondary">Inactive</Badge>}
+                  {m.invitationPending ? <div className="min-w-40 space-y-1"><Badge variant="outline">{m.invitationStatus}</Badge>{m.inviteExpiresAt && !m.inviteRevokedAt && <span className="block text-xs text-muted-foreground">Berlaku sampai {new Date(m.inviteExpiresAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} WIB</span>}</div> : m.isActive ? <Badge variant="success">Active</Badge> : <Badge variant="secondary">Inactive</Badge>}
                 </TableCell>
+                <TableCell><Link href={`/targets?user=${m.id}&period=${period}`} className="inline-flex items-center gap-1.5 text-sm font-medium underline-offset-4 hover:underline"><TargetIcon className="size-3.5" />Atur target</Link><span className="block text-xs text-muted-foreground">{Object.keys(m.targets ?? {}).length} target pribadi tersimpan</span></TableCell>
                 <TableCell className="text-right font-medium tabular-nums">{m.score === null ? "–" : formatNumber(m.score, 0)}</TableCell>
                 <TableCell>{m.status ? <KpiStatusLabel status={m.status} /> : <span className="text-muted-foreground">—</span>}</TableCell>
                 <TableCell className="text-muted-foreground">{m.lastLoginAt ?? "Never"}</TableCell>
                 <TableCell>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon-sm" aria-label={`Actions for ${m.name}`}>
+                      <Button variant="ghost" size="icon-sm" disabled={busy !== null} aria-label={`Actions for ${m.name}`}>
                         <EllipsisVerticalIcon />
                       </Button>
                     </DropdownMenuTrigger>
@@ -85,12 +101,16 @@ export function MembersTable({ rows }: { rows: MemberRow[] }) {
                       </DropdownMenuItem>
                       {m.role !== "supervisor" && (
                         <DropdownMenuItem asChild>
-                          <Link href={`/scorecard?user=${m.id}`}>
+                          <Link href={`/scorecard?user=${m.id}&period=${period}`}>
                             <GaugeIcon /> Scorecard
                           </Link>
                         </DropdownMenuItem>
                       )}
-                      {!m.isSelf && (
+                      {m.invitationPending && <>
+                        <DropdownMenuItem onSelect={() => void invitationAction(m.id, false)}><MailIcon /> Kirim ulang undangan</DropdownMenuItem>
+                        {!m.inviteRevokedAt && <DropdownMenuItem variant="destructive" onSelect={() => void invitationAction(m.id, true)}><XCircleIcon /> Batalkan undangan</DropdownMenuItem>}
+                      </>}
+                      {!m.isSelf && !m.invitationPending && (
                         <DropdownMenuItem
                           variant={m.isActive ? "destructive" : undefined}
                           onSelect={async () => {
@@ -111,7 +131,7 @@ export function MembersTable({ rows }: { rows: MemberRow[] }) {
           </TableBody>
         </Table>
       </div>
-      {editing && <MemberDialog key={editing.id} member={editing} onClose={() => (setEditing(null), router.refresh())} />}
+      {editing && <MemberDialog key={editing.id} metrics={metrics} period={period} member={editing} onClose={() => (setEditing(null), router.refresh())} />}
     </Panel>
   );
 }

@@ -22,7 +22,8 @@ export type NavSection = { label: string; items: NavItem[] };
 export type NavCounts = { pendingReviews: number; openTasks: number; revisions: number };
 
 export function buildNav(role: Role, counts: NavCounts, seniorAdvertiser = false): NavSection[] {
-  const main: NavItem[] = [{ title: "Overview", href: "/dashboard", icon: LayoutGridIcon,
+  if (role === "cso") return [{ label: "Form & Leads", items: [{ title: "Lead Saya", href: "/leads", icon: UsersIcon }] }, { label: "Akun", items: [{ title: "Pengaturan", href: "/settings", icon: SettingsIcon }] }];
+  const main: NavItem[] = [{ title: "Dashboard", href: "/dashboard", icon: LayoutGridIcon,
     ...(role === "supervisor" ? { children: [
       { title: "Dashboard Tim", href: "/dashboard" },
       { title: "Iklan Saya", href: "/dashboard?view=ads" },
@@ -30,40 +31,41 @@ export function buildNav(role: Role, counts: NavCounts, seniorAdvertiser = false
   }];
 
   main.push({
-    title: "Daily Reports",
+    title: "Laporan Harian",
     href: "/reports",
     icon: ClipboardListIcon,
     children: can.reviewReports(role)
       ? [
-          { title: "Submit Report", href: "/reports/new" },
+          { title: "Buat laporan", href: "/reports/new" },
           { title: "Laporan Iklan Saya", href: "/reports?view=mine" },
           { title: "Catatan Harian", href: "/reports/notes" },
-          { title: "All Reports", href: "/reports" },
-          { title: "Pending Review", href: "/reports?status=submitted", badge: counts.pendingReviews },
-          { title: "Needs Revision", href: "/reports?status=revision" },
+          { title: "Semua laporan", href: "/reports" },
+          { title: "Menunggu review", href: "/reports?status=submitted", badge: counts.pendingReviews },
+          { title: "Perlu revisi", href: "/reports?status=revision" },
         ]
       : [
-          { title: "Submit Report", href: "/reports/new" },
-          { title: "My Reports", href: "/reports" },
+          { title: "Buat laporan", href: "/reports/new" },
+          { title: "Laporan saya", href: "/reports" },
           // Advertiser reports are recorded without review; their notes get their own page instead.
           role === "advertiser"
             ? { title: "Catatan Harian", href: "/reports/notes" }
-            : { title: "Needs Revision", href: "/reports?status=revision", badge: counts.revisions },
+            : { title: "Perlu revisi", href: "/reports?status=revision", badge: counts.revisions },
         ],
   });
 
+  if (can.runAds(role)) main.push({ title: "Form Order", href: "/forms", icon: ClipboardListIcon }, { title: "Leads", href: "/leads", icon: UsersIcon });
   if (can.viewCampaigns(role)) main.push({ title: "Campaigns", href: "/campaigns", icon: MegaphoneIcon });
   if (can.viewCreatives(role)) main.push({ title: "Creative", href: "/creatives", icon: ClapperboardIcon });
-  main.push({ title: "Tasks", href: "/tasks", icon: ListTodoIcon, badge: counts.openTasks || undefined });
+  main.push({ title: "Tugas", href: "/tasks", icon: ListTodoIcon, badge: counts.openTasks || undefined });
 
   if (can.manageTeam(role)) {
     main.push({
-      title: "Team",
+      title: "Tim",
       href: "/team",
       icon: UsersIcon,
       children: [
-        { title: "Members", href: "/team" },
-        { title: "KPI Targets", href: "/targets" },
+        { title: "Anggota", href: "/team" },
+        { title: "Target KPI", href: "/targets" },
       ],
     });
   }
@@ -73,26 +75,23 @@ export function buildNav(role: Role, counts: NavCounts, seniorAdvertiser = false
     main.push({ title: "Penilaian Kinerja", href: "/appraisals", icon: AwardIcon });
   }
 
+  const section=(label:string,paths:string[]):NavSection=>({label,items:paths.flatMap(path=>main.filter(item=>item.href===path))});
   return [
-    { label: "Main Navigation", items: main },
-    {
-      label: "Analytics & Insights",
-      items: [
-        { title: "KPI Scorecard", href: "/scorecard", icon: GaugeIcon },
-        { title: "Leaderboard", href: "/leaderboard", icon: TrophyIcon },
-      ],
-    },
-    {
-      label: "Support",
-      items: [
-        { title: "KPI Guide", href: "/guide", icon: BookOpenIcon },
-        { title: "Settings", href: "/settings", icon: SettingsIcon },
-      ],
-    },
-  ];
+    section("Utama",["/dashboard","/reports","/tasks"]),
+    section("Iklan & Konten",["/campaigns","/creatives"]),
+    section("Form & Leads",["/forms","/leads"]),
+    {label:"Tim & Kinerja",items:[...section("",["/team","/appraisals"]).items,{title:"KPI Scorecard",href:"/scorecard",icon:GaugeIcon},{title:"Leaderboard",href:"/leaderboard",icon:TrophyIcon}]},
+    {label:"Bantuan",items:[{title:"Panduan KPI",href:"/guide",icon:BookOpenIcon},{title:"Pengaturan",href:"/settings",icon:SettingsIcon}]},
+  ].filter(section=>section.items.length>0);
+
 }
 
 const TITLES: [prefix: string, section: string, page: string][] = [
+  ["/forms/new", "Form & Leads", "Buat form"],
+  ["/forms/", "Form & Leads", "Kelola form"],
+  ["/forms", "Form & Leads", "Form Order"],
+  ["/leads/", "Form & Leads", "Detail lead"],
+  ["/leads", "Form & Leads", "Leads"],
   ["/dashboard", "Overview", "Dashboard"],
   ["/reports/new", "Daily Reports", "Submit Report"],
   ["/reports/notes", "Daily Reports", "Catatan Harian"],

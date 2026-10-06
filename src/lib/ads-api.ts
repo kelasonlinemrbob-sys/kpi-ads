@@ -6,14 +6,14 @@ import { getMetaToken, META_API_VERSION, META_TOKEN_MISSING, metaErrorMessage, t
 
 /**
  * Pulls one day of campaign-level metrics for a whole ad account from the Meta Marketing API
- * or the Google Ads API. The Meta token is set in Settings → Koneksi Meta Ads (or META_ACCESS_TOKEN);
- * Google credentials come from Settings → Integrasi, with env as a fallback. Dates are interpreted
+ * or the Google Ads API. Credentials belong to the registered account owner,
+ * configured in Settings → Integrasi. Dates are interpreted
  * in the ad account's own timezone.
  */
 
 export type AdsMetrics = { landingPageViews: number | null; spent: number; impressions: number; clicks: number; leads: number };
 
-export type AdsAccountRef = { platform: "meta" | "google"; accountId: string; lpvConversionAction?: string | null };
+export type AdsAccountRef = { createdById: number | null; platform: "meta" | "google"; accountId: string; lpvConversionAction?: string | null };
 
 export type AdsCampaignMetrics = { id: string; name: string } & AdsMetrics;
 
@@ -22,7 +22,7 @@ export type AdsAccountResult = { ok: true; campaigns: AdsCampaignMetrics[]; lpvA
 const digits = (value: string) => value.replace(/\D/g, "");
 
 export function fetchAccountCampaigns(account: AdsAccountRef, date: string): Promise<AdsAccountResult> {
-  return account.platform === "meta" ? fetchMetaAccount(account.accountId, date) : fetchGoogleAccount(account.accountId, date, account.lpvConversionAction);
+  return account.platform === "meta" ? fetchMetaAccount(account.accountId, date, account.createdById) : fetchGoogleAccount(account.accountId, date, account.createdById, account.lpvConversionAction);
 }
 
 /* ---------------------------------- Meta ---------------------------------- */
@@ -43,8 +43,8 @@ type MetaInsight = {
   actions?: { action_type: string; value: string }[];
 };
 
-async function fetchMetaAccount(accountId: string, date: string): Promise<AdsAccountResult> {
-  const token = await getMetaToken();
+async function fetchMetaAccount(accountId: string, date: string, userId: number | null): Promise<AdsAccountResult> {
+  const token = await getMetaToken(userId);
   if (!token) return { ok: false, error: META_TOKEN_MISSING };
   const version = META_API_VERSION;
   const url = new URL(`https://graph.facebook.com/${version}/act_${digits(accountId)}/insights`);
@@ -81,15 +81,15 @@ async function fetchMetaAccount(accountId: string, date: string): Promise<AdsAcc
       next = body.paging?.next;
     }
     return { ok: true, campaigns, lpvAvailable: true };
-  } catch (error) {
-    return { ok: false, error: `Gagal menghubungi Meta API: ${(error as Error).message}` };
+  } catch {
+    return { ok: false, error: "Gagal menghubungi Meta API. Coba lagi nanti." };
   }
 }
 
 /* --------------------------------- Google --------------------------------- */
 
-export async function googleConfigured() {
-  return Boolean(await getGoogleCredentials());
+export async function googleConfigured(userId: number | null) {
+  return Boolean(await getGoogleCredentials(userId));
 }
 
 type GoogleMetricRow = {
@@ -97,27 +97,27 @@ type GoogleMetricRow = {
   metrics?: { costMicros?: string; impressions?: string; clicks?: string; conversions?: number; allConversions?: number };
 };
 
-export async function googleSearch<T>(customerId: string, query: string): Promise<T[]> {
-  const credentials = await getGoogleCredentials();
+export async function googleSearch<T>(customerId: string, query: string, userId: number | null): Promise<T[]> {
+  const credentials = await getGoogleCredentials(userId);
   if (!credentials) throw new Error("Kredensial Google Ads belum diset. Buka Settings → Integrasi → Koneksi Google Ads.");
   return googleSearchWithCredentials<T>(credentials, customerId, query);
 }
 
 export type GoogleConversionOption = { resourceName: string; name: string; category: string };
-export async function fetchGoogleConversionActions(customerId: string): Promise<{ ok: true; actions: GoogleConversionOption[] } | { ok: false; error: string }> {
-  if (!await googleConfigured()) return { ok: false, error: "Kredensial Google Ads API belum diset." };
+export async function fetchGoogleConversionActions(customerId: string, userId: number | null): Promise<{ ok: true; actions: GoogleConversionOption[] } | { ok: false; error: string }> {
+  if (!await googleConfigured(userId)) return { ok: false, error: "Kredensial Google Ads API belum diset." };
   try {
     const rows = await googleSearch<{ conversionAction: GoogleConversionOption }>(customerId,
-      "SELECT conversion_action.resource_name, conversion_action.name, conversion_action.category FROM conversion_action WHERE conversion_action.status = 'ENABLED'");
+      "SELECT conversion_action.resource_name, conversion_action.name, conversion_action.category FROM conversion_action WHERE conversion_action.status = 'ENABLED'", userId);
     return { ok: true, actions: rows.map((r) => r.conversionAction) };
   } catch (error) { return { ok: false, error: `Gagal mengambil konversi Google Ads: ${(error as Error).message}` }; }
 }
 
-async function fetchGoogleAccount(customerId: string, date: string, lpvAction?: string | null): Promise<AdsAccountResult> {
-  if (!await googleConfigured()) return { ok: false, error: "Kredensial Google Ads API belum diset." };
+async function fetchGoogleAccount(customerId: string, date: string, userId: number | null, lpvAction?: string | null): Promise<AdsAccountResult> {
+  if (!await googleConfigured(userId)) return { ok: false, error: "Kredensial Google Ads API belum diset." };
   try {
     const rows = await googleSearch<GoogleMetricRow>(customerId, `SELECT campaign.id, campaign.name, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions
-      FROM campaign WHERE segments.date = '${date}'`);
+      FROM campaign WHERE segments.date = '${date}'`, userId);
     let lpvAvailable = false;
     const lpv = new Map<string, number>();
     const warnings: string[] = [];
@@ -126,11 +126,11 @@ async function fetchGoogleAccount(customerId: string, date: string, lpvAction?: 
     } else {
       // Keep conversion segmentation separate: it cannot share cost/impression/click metrics.
       try {
-        const actions = await fetchGoogleConversionActions(customerId);
+        const actions = await fetchGoogleConversionActions(customerId, userId);
         if (!actions.ok) throw new Error(actions.error);
         if (!actions.actions.some((a) => a.resourceName === lpvAction)) throw new Error("Konversi LPV tidak aktif atau tidak tersedia pada akun ini. Pilih ulang di Akun iklan.");
         const conversions = await googleSearch<GoogleMetricRow>(customerId, `SELECT campaign.id, segments.conversion_action, metrics.all_conversions
-          FROM campaign WHERE segments.date = '${date}' AND segments.conversion_action = '${lpvAction}'`);
+          FROM campaign WHERE segments.date = '${date}' AND segments.conversion_action = '${lpvAction}'`, userId);
         for (const row of conversions) {
           const value = Number(row.metrics?.allConversions ?? 0);
           if (!Number.isFinite(value) || value < 0) throw new Error("Nilai LPV dari Google Ads tidak valid.");
@@ -166,7 +166,7 @@ export type AdsCampaignListResult = { ok: true; campaigns: AdsCampaignInfo[] } |
 
 /** Lists every non-deleted campaign of an ad account with its status, budget and schedule. */
 export function fetchAccountCampaignList(account: AdsAccountRef): Promise<AdsCampaignListResult> {
-  return account.platform === "meta" ? listMetaCampaigns(account.accountId) : listGoogleCampaigns(account.accountId);
+  return account.platform === "meta" ? listMetaCampaigns(account.accountId, account.createdById) : listGoogleCampaigns(account.accountId, account.createdById);
 }
 
 /** Currencies Meta reports budgets for in whole units instead of 1/100 (see Meta's currency offsets). */
@@ -179,8 +179,8 @@ function metaStatus(effective: string): AdsCampaignInfo["status"] {
   return "draft"; // IN_PROCESS, WITH_ISSUES, PENDING_REVIEW, …
 }
 
-async function listMetaCampaigns(accountId: string): Promise<AdsCampaignListResult> {
-  const token = await getMetaToken();
+async function listMetaCampaigns(accountId: string, userId: number | null): Promise<AdsCampaignListResult> {
+  const token = await getMetaToken(userId);
   if (!token) return { ok: false, error: META_TOKEN_MISSING };
   const version = META_API_VERSION;
   const base = `https://graph.facebook.com/${version}/act_${digits(accountId)}`;
@@ -228,8 +228,8 @@ async function listMetaCampaigns(accountId: string): Promise<AdsCampaignListResu
       next = body.paging?.next;
     }
     return { ok: true, campaigns };
-  } catch (error) {
-    return { ok: false, error: `Gagal menghubungi Meta API: ${(error as Error).message}` };
+  } catch {
+    return { ok: false, error: "Gagal menghubungi Meta API. Coba lagi nanti." };
   }
 }
 
@@ -243,18 +243,19 @@ function googleStatus(status: string): AdsCampaignInfo["status"] {
 /** Google returns dates as YYYY-MM-DD, and "2037-12-30" when a campaign has no end date. */
 const googleDate = (value?: string) => (value && !value.startsWith("2037-12-30") ? value.slice(0, 10) : null);
 
-async function listGoogleCampaigns(customerId: string): Promise<AdsCampaignListResult> {
-  if (!await googleConfigured()) return { ok: false, error: "Kredensial Google Ads API belum diset." };
+async function listGoogleCampaigns(customerId: string, userId: number | null): Promise<AdsCampaignListResult> {
+  if (!await googleConfigured(userId)) return { ok: false, error: "Kredensial Google Ads API belum diset." };
   // Newer API versions use start_date_time / end_date_time; older ones start_date / end_date.
-  const first = await queryGoogleCampaigns(customerId, "start_date_time", "end_date_time");
+  const first = await queryGoogleCampaigns(customerId, "start_date_time", "end_date_time", userId);
   if (first.ok || !/start_date_time|end_date_time|unrecognized[ _]field/i.test(first.error)) return first;
-  return queryGoogleCampaigns(customerId, "start_date", "end_date");
+  return queryGoogleCampaigns(customerId, "start_date", "end_date", userId);
 }
 
 async function queryGoogleCampaigns(
   customerId: string,
   startField: "start_date_time" | "start_date",
   endField: "end_date_time" | "end_date",
+  userId: number | null,
 ): Promise<AdsCampaignListResult> {
   const query = `SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type,
       campaign.${startField}, campaign.${endField}, campaign_budget.amount_micros
@@ -266,7 +267,7 @@ async function queryGoogleCampaigns(
       campaign: { id: string; name: string; status: string; advertisingChannelType?: string } & Record<string, string | undefined>;
       campaignBudget?: { amountMicros?: string };
     };
-    const rows = await googleSearch<Row>(customerId, query);
+    const rows = await googleSearch<Row>(customerId, query, userId);
     return {
       ok: true,
       campaigns: rows.map((row) => ({

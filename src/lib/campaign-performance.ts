@@ -36,7 +36,7 @@ export async function fetchCampaignPerformance(account: AdsAccountRef, start: st
   if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || start > end) return { ok: false, error: "Periode tidak valid." };
   try {
     if (account.platform === "google") return await googlePerformance(account, start, end);
-    const token = await getMetaToken();
+    const token = await getMetaToken(account.createdById);
     if (!token) return { ok: false, error: META_TOKEN_MISSING };
     const base = `https://graph.facebook.com/${META_API_VERSION}/act_${account.accountId.replace(/\D/g, "")}`;
     const get = async (url: string) => {
@@ -72,12 +72,12 @@ export async function fetchCampaignPerformance(account: AdsAccountRef, start: st
 }
 
 async function googlePerformance(account: AdsAccountRef, start: string, end: string): Promise<CampaignPerformanceResult> {
-  if (!await googleConfigured()) return { ok: false, error: "Kredensial Google Ads API belum diset." };
+  if (!await googleConfigured(account.createdById)) return { ok: false, error: "Kredensial Google Ads API belum diset." };
   const dates = `segments.date BETWEEN '${start}' AND '${end}'`;
   const [info, rows] = await Promise.all([
-    googleSearch<{ customer: { currencyCode: string } }>(account.accountId, "SELECT customer.currency_code FROM customer LIMIT 1"),
+    googleSearch<{ customer: { currencyCode: string } }>(account.accountId, "SELECT customer.currency_code FROM customer LIMIT 1", account.createdById),
     googleSearch<{ campaign: { id: string }; metrics: { costMicros?: string; impressions?: string; clicks?: string; conversions?: number } }>(account.accountId,
-      `SELECT campaign.id, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions FROM campaign WHERE ${dates}`),
+      `SELECT campaign.id, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions FROM campaign WHERE ${dates}`, account.createdById),
   ]);
   const currency = info[0]?.customer.currencyCode;
   if (!currency || !/^[A-Z]{3}$/.test(currency)) throw new Error("Currency unavailable");
@@ -86,10 +86,10 @@ async function googlePerformance(account: AdsAccountRef, start: string, end: str
   const warnings: string[] = [];
   if (account.lpvConversionAction && validGoogleConversionResource(account.lpvConversionAction)) {
     try {
-      const actions = await fetchGoogleConversionActions(account.accountId);
+      const actions = await fetchGoogleConversionActions(account.accountId, account.createdById);
       if (!actions.ok || !actions.actions.some((a) => a.resourceName === account.lpvConversionAction)) throw new Error("Mapping unavailable");
       const values = await googleSearch<{ campaign: { id: string }; metrics: { allConversions?: number } }>(account.accountId,
-        `SELECT campaign.id, segments.conversion_action, metrics.all_conversions FROM campaign WHERE ${dates} AND segments.conversion_action = '${account.lpvConversionAction}'`);
+        `SELECT campaign.id, segments.conversion_action, metrics.all_conversions FROM campaign WHERE ${dates} AND segments.conversion_action = '${account.lpvConversionAction}'`, account.createdById);
       for (const row of values) lpv.set(row.campaign.id, (lpv.get(row.campaign.id) ?? 0) + Number(row.metrics.allConversions ?? 0));
       lpvAvailable = true;
     } catch { warnings.push("LPV Google tidak tersedia. Periksa konversi LPV yang dipilih di Akun iklan."); }

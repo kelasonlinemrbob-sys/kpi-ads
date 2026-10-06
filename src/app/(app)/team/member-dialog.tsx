@@ -4,8 +4,10 @@ import * as React from "react";
 import { useActionState } from "react";
 import { LoaderIcon, UserPlusIcon } from "lucide-react";
 import { toast } from "sonner";
-import type { AdvertiserLevel, Role } from "@/db/schema";
+import type { AdvertiserLevel, KpiMetric, Role } from "@/db/schema";
 import { saveMember } from "@/actions/team";
+import { useRouter } from "next/navigation";
+import { MemberTargetFields } from "@/components/member-target-fields";
 import { DEFAULT_SECONDARY_SHARE } from "@/lib/member-roles";
 import { ADVERTISER_LEVEL_LABEL, ROLES, ROLE_LABEL } from "@/lib/roles";
 import { Button } from "@/components/ui/button";
@@ -18,25 +20,30 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 export type EditableMember = {
   id: number;
   name: string;
+  avatarId?: number | null;
   email: string;
   role: Role;
   advertiserLevel: AdvertiserLevel | null;
   secondaryRole: Role | null;
   secondaryShare: number;
   title: string | null;
+  csoPhone?: string | null;
   isActive: boolean;
+  invitationPending: boolean;
   isSelf?: boolean;
+  targets?: Record<number, number>;
 };
 
-export function MemberDialog({ member, onClose }: { member?: EditableMember; onClose?: () => void }) {
+export function MemberDialog({ member, onClose, metrics, period }: { member?: EditableMember; onClose?: () => void; metrics: KpiMetric[]; period: string }) {
+  const router = useRouter();
   const [open, setOpen] = React.useState(!!member);
   const [state, action, pending] = useActionState(saveMember, undefined);
   const [role, setRole] = React.useState<Role>(member?.role ?? "advertiser");
   const [secondRole, setSecondRole] = React.useState<string>(member?.secondaryRole ?? "none");
   const [secondShare, setSecondShare] = React.useState(member?.secondaryShare ?? DEFAULT_SECONDARY_SHARE);
   // The second role can't be the main role, a supervisor, or the advertiser role (ads features follow the main role).
-  const secondOptions = ROLES.filter((r) => r !== "supervisor" && r !== "advertiser" && r !== role);
-  const second = role !== "supervisor" && secondOptions.includes(secondRole as Role) ? (secondRole as Role) : null;
+  const secondOptions = ROLES.filter((r) => r !== "supervisor" && r !== "advertiser" && r !== "cso" && r !== role);
+  const second = role !== "cso" && role !== "supervisor" && secondOptions.includes(secondRole as Role) ? (secondRole as Role) : null;
   const change = (o: boolean) => {
     setOpen(o);
     if (!o) onClose?.();
@@ -44,8 +51,10 @@ export function MemberDialog({ member, onClose }: { member?: EditableMember; onC
 
   React.useEffect(() => {
     if (state?.ok) {
-      toast.success(state.message);
+      if (state.warning) toast.warning(state.warning);
+      else toast.success(state.message);
       change(false);
+      router.refresh();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state]);
@@ -55,19 +64,20 @@ export function MemberDialog({ member, onClose }: { member?: EditableMember; onC
       {!member && (
         <DialogTrigger asChild>
           <Button className="h-8">
-            <UserPlusIcon /> Add member
+            <UserPlusIcon /> Undang anggota
           </Button>
         </DialogTrigger>
       )}
-      <DialogContent>
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{member ? `Edit ${member.name}` : "Add team member"}</DialogTitle>
+          <DialogTitle>{member ? `Edit ${member.name}` : "Undang anggota"}</DialogTitle>
           <DialogDescription>
-            {member ? "Leave the password empty to keep the current one." : "They can sign in right away with this email and password."}
+            {!member ? "Undangan dikirim lewat email dan berlaku 72 jam. Anggota membuat password sendiri sebelum dapat login." : member.invitationPending ? "Anggota belum bergabung. Mengubah email akan mengirim undangan baru dan membatalkan tautan lama." : "Kosongkan password untuk mempertahankan password saat ini."}
           </DialogDescription>
         </DialogHeader>
         <form action={action} className="grid gap-3">
           {member && <input type="hidden" name="id" value={member.id} />}
+          {member?.invitationPending && <input type="hidden" name="editingInvitation" value="on" />}
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-2">
               <Label htmlFor="m-name">Full name</Label>
@@ -111,7 +121,7 @@ export function MemberDialog({ member, onClose }: { member?: EditableMember; onC
                 </Select>
               </div>
             )}
-            {role !== "supervisor" && (
+            {role !== "supervisor" && role !== "cso" && (
               <div className="grid gap-2">
                 <Label>Role kedua (rangkap)</Label>
                 <Select name="secondaryRole" value={second ?? "none"} onValueChange={setSecondRole}>
@@ -154,7 +164,7 @@ export function MemberDialog({ member, onClose }: { member?: EditableMember; onC
                 <input type="hidden" name="secondaryShare" value={secondShare} />
                 <p className="text-xs text-muted-foreground">
                   Skor KPI total = {100 - secondShare}% skor {ROLE_LABEL[role]} + {secondShare}% skor {ROLE_LABEL[second]}. Target default
-                  (total bulanan) ikut diprorata sesuai porsi; target khusus di KPI Targets berlaku apa adanya.
+                  (total bulanan) ikut diprorata sesuai porsi; target pribadi di bawah berlaku apa adanya.
                 </p>
               </div>
             )}
@@ -163,17 +173,19 @@ export function MemberDialog({ member, onClose }: { member?: EditableMember; onC
               <Input id="m-title" name="title" placeholder="e.g. Meta Ads Specialist" defaultValue={member?.title ?? ""} />
             </div>
           </div>
-          <div className="grid gap-2">
+          {member && !member.invitationPending && <div className="grid gap-2">
             <Label htmlFor="m-password">{member ? "New password" : "Password"}</Label>
             <Input id="m-password" name="password" type="password" minLength={8} autoComplete="new-password" required={!member} />
-          </div>
-          {member?.isSelf ? (
+          </div>}
+          {member && !member.invitationPending && (member.isSelf ? (
             <input type="hidden" name="isActive" value="on" />
           ) : (
             <Label className="font-normal">
-              <Checkbox name="isActive" defaultChecked={member?.isActive ?? true} value="on" /> Active — can sign in and appears in KPI
+              <Checkbox name="isActive" defaultChecked={member.isActive} value="on" /> Active — can sign in and appears in KPI
             </Label>
-          )}
+          ))}
+          {role === "cso" && <div className="grid gap-2"><Label htmlFor="m-cso">Nomor WhatsApp CSO</Label><Input id="m-cso" name="csoPhone" defaultValue={member?.csoPhone ?? ""} placeholder="6281234567890" required /><p className="text-xs text-muted-foreground">Tujuan pengalihan customer dari form order.</p></div>}
+          <MemberTargetFields key={`${role}-${second}-${secondShare}-${period}`} metrics={metrics} member={{ role, secondaryRole: second, secondaryShare: secondShare }} targets={member?.targets} period={period} />
           {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => change(false)}>
@@ -181,7 +193,7 @@ export function MemberDialog({ member, onClose }: { member?: EditableMember; onC
             </Button>
             <Button type="submit" disabled={pending}>
               {pending && <LoaderIcon className="animate-spin" />}
-              {member ? "Save changes" : "Add member"}
+              {member ? "Simpan perubahan" : "Kirim undangan"}
             </Button>
           </DialogFooter>
         </form>

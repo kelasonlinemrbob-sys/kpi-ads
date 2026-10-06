@@ -23,6 +23,7 @@ export type ReportRow = {
   summary: string;
   userId: number;
   name: string;
+  avatarId?: number | null;
   role: Role;
   secondaryRole: Role | null;
   /** Advertiser-only reports are recorded without review. */
@@ -116,7 +117,7 @@ export function ReportsTable({ rows, canApprove, showMember }: { rows: ReportRow
                   {showMember && (
                     <TableCell>
                       <span className="flex items-center gap-2.5">
-                        <UserAvatar name={r.name} className="size-7" />
+                        <UserAvatar name={r.name} avatarId={r.avatarId} className="size-7" />
                         <span>
                           <span className="block font-medium">{r.name}</span>
                           <span className="block text-xs text-muted-foreground">{ROLE_LABEL[r.role]}{r.secondaryRole && r.secondaryRole !== r.role ? ` + ${ROLE_LABEL[r.secondaryRole]}` : ""}</span>

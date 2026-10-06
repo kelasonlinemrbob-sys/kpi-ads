@@ -1,6 +1,11 @@
 "use server";
 
+import { normalizePhone } from "@/lib/order-form-input";
 import bcrypt from "bcryptjs";
+import { randomBytes } from "node:crypto";
+import { deliverMemberInvitation, InvitationError, invitationErrorMessage, issueMemberInvitation } from "@/lib/member-invitations";
+import { resetMailConfig } from "@/lib/reset-mail";
+import { takeResetQuota } from "@/lib/password-reset";
 import { and, eq, ne, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -9,6 +14,8 @@ import { advertiserLevelEnum, kpiMetrics, kpiTargets, roleEnum, users } from "@/
 import { createSession, requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
 import { isPeriod, periodRange } from "@/lib/kpi";
+import { parseMemberTargets } from "@/lib/member-targets";
+import { writeMemberTargets } from "@/lib/member-target-store";
 import { validTarget } from "@/lib/target-rules";
 import { DEFAULT_SECONDARY_SHARE, hasRole } from "@/lib/member-roles";
 import { ROLE_LABEL, roleLabel } from "@/lib/roles";
@@ -23,12 +30,13 @@ async function requireSupervisor() {
 const memberSchema = z.object({
   id: z.coerce.number().int().positive().optional(),
   name: z.string().trim().min(2, "Name is too short").max(120),
-  email: z.email("Enter a valid email").transform((s) => s.toLowerCase().trim()),
+  email: z.email("Enter a valid email").max(180).transform((s) => s.toLowerCase().trim()),
   role: z.enum(roleEnum.enumValues),
   advertiserLevel: z.enum(advertiserLevelEnum.enumValues).optional(),
   secondaryRole: z.enum(roleEnum.enumValues).optional().or(z.literal("none").transform(() => undefined)),
   secondaryShare: z.coerce.number().int().min(10, "Porsi role kedua minimal 10%.").max(90, "Porsi role kedua maksimal 90%.").optional(),
   title: z.string().trim().max(120).optional(),
+  csoPhone: z.string().trim().max(30).optional(),
   password: z.string().min(8, "Password must be at least 8 characters").optional().or(z.literal("").transform(() => undefined)),
   isActive: z.enum(["on"]).optional(),
 });
@@ -39,6 +47,10 @@ export async function saveMember(_: FormState, formData: FormData): Promise<Form
   const parsed = memberSchema.safeParse(raw);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };
   const { id, password, isActive, advertiserLevel, secondaryRole, secondaryShare, ...rest } = parsed.data;
+  if (secondaryRole === "cso" || (rest.role === "cso" && secondaryRole)) return { error: "CSO menggunakan role utama tanpa role rangkap." };
+  if (rest.role === "cso") {
+    try { rest.csoPhone = normalizePhone(rest.csoPhone ?? ""); } catch { return { error: "Isi nomor WhatsApp CSO yang valid." }; }
+  } else { rest.csoPhone = undefined; }
   if (secondaryRole) {
     if (rest.role === "supervisor" || secondaryRole === "supervisor") return { error: "Supervisor tidak bisa merangkap role lain." };
     if (secondaryRole === rest.role) return { error: "Role kedua harus berbeda dari role utama." };
@@ -60,49 +72,75 @@ export async function saveMember(_: FormState, formData: FormData): Promise<Form
     .limit(1);
   if (clash) return { error: "Another account already uses this email." };
 
-  if (id) {
-    if (id === me.id && (data.role !== "supervisor" || !isActive)) {
-      return { error: "You can't remove your own supervisor access." };
-    }
-    await db
-      .update(users)
-      .set({
-        ...data,
-        title: data.title || null,
-        isActive: !!isActive,
-        // A password reset or deactivation ends the member's open sessions.
-        ...(password ? { passwordHash: await bcrypt.hash(password, 10) } : {}),
-        ...(password || !isActive ? { sessionVersion: sql`${users.sessionVersion} + 1` } : {}),
-      })
-      .where(eq(users.id, id));
-    // A supervisor resetting their own password stays signed in on this device.
-    if (id === me.id && password) {
-      const [self] = await db.select({ sessionVersion: users.sessionVersion }).from(users).where(eq(users.id, id));
-      await createSession(id, self!.sessionVersion);
-    }
-  } else {
-    if (!password) return { error: "Set an initial password for the new member." };
-    const [created] = await db
-      .insert(users)
-      .values({ ...data, title: data.title || null, passwordHash: await bcrypt.hash(password, 10) })
-      .returning({ id: users.id });
-    await logActivity({
-      actorId: me.id,
-      subjectUserId: created!.id,
-      type: "user_created",
-      title: "New Team Member",
-      description: `${data.name} joined as ${roleLabel(data.role, data.advertiserLevel)}${data.secondaryRole ? ` + ${ROLE_LABEL[data.secondaryRole]}` : ""}`,
-      href: "/team",
-    });
+  if (id === me.id && (data.role !== "supervisor" || !isActive)) return { error: "You can't remove your own supervisor access." };
+  if (!id && password) return { error: "Member baru membuat password sendiri melalui undangan email." };
+  const [before] = id ? await db.select().from(users).where(eq(users.id, id)) : [];
+  if (id && !before) return { error: "Anggota tidak ditemukan." };
+  const needsInvitation = !id || (before?.invitationPending && before.email !== data.email);
+  if (needsInvitation) {
+    try { resetMailConfig(); } catch { return { error: "Layanan email belum tersedia. Periksa konfigurasi SMTP server." }; }
+    if (!await takeResetQuota(db, `invitation:sender:${me.id}`, 20)) return { error: "Batas pengiriman undangan tercapai. Coba lagi dalam 15 menit." };
   }
+  let targetInput: ReturnType<typeof parseMemberTargets> | undefined;
+  if (formData.has("targetPeriod")) {
+    try { targetInput = parseMemberTargets(formData, await db.select().from(kpiMetrics), data); }
+    catch (error) { return { error: (error as Error).message }; }
+  }
+  const passwordHash = password || !id ? await bcrypt.hash(password || randomBytes(32).toString("hex"), 10) : undefined;
+  let saved: { userId: number; issued?: Awaited<ReturnType<typeof issueMemberInvitation>> } | null;
+  try {
+    saved = await db.transaction(async (tx) => {
+      let userId = id;
+      let invite = !id;
+      if (userId) {
+        const [current] = await tx.select().from(users).where(eq(users.id, userId)).for("update");
+        if (!current) return null;
+        if (formData.get("editingInvitation") === "on" && !current.invitationPending) throw new InvitationError("Anggota sudah bergabung. Muat ulang sebelum mengedit akun.");
+        if (current.invitationPending && password) throw new InvitationError("Password member undangan harus dibuat sendiri oleh penerima.");
+        invite = current.invitationPending && current.email !== data.email;
+        await tx.update(users).set({
+          ...data, title: data.title || null, isActive: current.invitationPending ? false : !!isActive,
+          ...(passwordHash ? { passwordHash } : {}),
+          ...(password || !isActive ? { sessionVersion: sql`${users.sessionVersion} + 1` } : {}),
+        }).where(eq(users.id, userId));
+      } else {
+        const [created] = await tx.insert(users).values({ ...data, title: data.title || null, isActive: false, invitationPending: true, passwordHash: passwordHash! }).returning({ id: users.id });
+        userId = created.id;
+      }
+      if (targetInput) await writeMemberTargets(tx, userId, targetInput);
+      const issued = invite ? await issueMemberInvitation(tx, userId, me.id, new Date(), !!id) : undefined;
+      return { userId, issued };
+    });
+  } catch (error) {
+    const code = (error as { code?: string; cause?: { code?: string } });
+    if (code.code === "23505" || code.cause?.code === "23505") return { error: "Email sudah digunakan oleh anggota lain." };
+    return { error: invitationErrorMessage(error) };
+  }
+  if (!saved) return { error: "Anggota tidak ditemukan." };
+  const savedId = saved.userId;
+  if (id === me.id && password) {
+    const [self] = await db.select({ sessionVersion: users.sessionVersion }).from(users).where(eq(users.id, id));
+    await createSession(id, self!.sessionVersion);
+  }
+  let delivered = true;
+  if (saved.issued) {
+    try { delivered = await deliverMemberInvitation(saved.issued, me.name); } catch { delivered = false; }
+  }
+  await logActivity({ actorId: me.id, subjectUserId: savedId, type: id ? "target_updated" : "user_created",
+    title: id ? "Member Updated" : "New Team Member",
+    description: `${data.name} · ${roleLabel(data.role, data.advertiserLevel)}${targetInput ? ` · target ${targetInput.period}` : ""}`,
+    href: `/targets?user=${savedId}${targetInput ? `&period=${targetInput.period}` : ""}` });
   revalidatePath("/", "layout");
-  return { ok: true, message: id ? "Member updated" : "Member added" };
+  if (!delivered) return { ok: true, warning: "Anggota dan target KPI tersimpan, tetapi email undangan belum berhasil dikirim. Gunakan Kirim ulang undangan di tabel anggota." };
+  return { ok: true, message: saved.issued ? "Undangan email dikirim. Member akan membuat password sendiri." : "Member updated" };
 }
 
 export async function setMemberActive(id: number, active: boolean) {
   const me = await requireSupervisor();
   if (id === me.id) return { error: "You can't deactivate yourself." };
-  await db.update(users).set({ isActive: active }).where(eq(users.id, id));
+  if (!Number.isSafeInteger(id) || id <= 0 || typeof active !== "boolean") return { error: "Data anggota tidak valid." };
+  const [updated] = await db.update(users).set({ isActive: active, ...(!active ? { sessionVersion: sql`${users.sessionVersion} + 1` } : {}) }).where(and(eq(users.id, id), eq(users.invitationPending, false))).returning({ id: users.id });
+  if (!updated) return { error: "Anggota belum bergabung. Kirim ulang undangan agar ia dapat membuat password." };
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -185,4 +223,25 @@ export async function saveTargets(_: FormState, formData: FormData): Promise<For
   });
   revalidatePath("/", "layout");
   return { ok: true, message: totalWeight === 100 ? "Targets saved" : `Targets saved (weights total ${totalWeight}%, scores are normalised)` };
+}
+
+/** One member and one month; role defaults and other members are never modified. */
+export async function saveMemberTargets(_: FormState, formData: FormData): Promise<FormState> {
+  const me = await requireSupervisor();
+  const id = Number(formData.get("userId"));
+  if (!Number.isSafeInteger(id) || id <= 0) return { error: "Pilih anggota yang valid." };
+  const result = await db.transaction(async (tx) => {
+    const [member] = await tx.select().from(users).where(eq(users.id, id)).for("update");
+    if (!member) return { error: "Anggota tidak ditemukan." };
+    let input: ReturnType<typeof parseMemberTargets>;
+    try { input = parseMemberTargets(formData, await tx.select().from(kpiMetrics), member); }
+    catch (error) { return { error: (error as Error).message }; }
+    if (!input.values.length) return { error: "Isi minimal satu target untuk disimpan." };
+    await writeMemberTargets(tx, id, input);
+    return { period: input.period, name: member.name };
+  });
+  if ("error" in result) return result;
+  await logActivity({ actorId: me.id, subjectUserId: id, type: "target_updated", title: "Target Bulanan Anggota", description: `${result.name} · ${result.period}`, href: `/targets?user=${id}&period=${result.period}` });
+  revalidatePath("/", "layout");
+  return { ok: true, message: `Target ${result.name} untuk ${result.period} disimpan.` };
 }

@@ -48,6 +48,7 @@ export default async function ScorecardPage({ searchParams }: { searchParams: Pr
       : {
           id: user.id,
           name: user.name,
+          avatarId: user.avatarId,
           email: user.email,
           role: user.role,
           title: user.title,
@@ -170,7 +171,7 @@ export default async function ScorecardPage({ searchParams }: { searchParams: Pr
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] 2xl:grid-cols-[360px_minmax(0,1fr)_minmax(0,1fr)]">
         <Panel title="Member" icon={UserIcon}>
           <div className="flex items-center gap-3 p-4">
-            <UserAvatar name={target.name} className="size-12" />
+            <UserAvatar name={target.name} avatarId={target.avatarId} className="size-12" />
             <div className="min-w-0">
               <p className="truncate text-lg font-medium">{target.name}</p>
               <p className="truncate text-sm text-muted-foreground">

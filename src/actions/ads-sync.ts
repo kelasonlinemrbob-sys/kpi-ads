@@ -1,4 +1,5 @@
 "use server";
+import { getFormLeadCounts } from "@/lib/form-lead-metrics";
 
 import { and, eq, inArray, isNotNull, notInArray } from "drizzle-orm";
 import { db } from "@/db";
@@ -19,7 +20,7 @@ export type GeneratedAdsReport =
       ok: true;
       performanceDate: string;
       /** One row per product the advertiser owns, summed over every matching platform campaign. */
-      rows: ({ campaignId: number; platform: "meta" | "google"; campaigns: AdsCampaignMetrics[] } & AdsMetrics)[];
+      rows: ({ campaignId: number; platform: "meta" | "google"; campaigns: AdsCampaignMetrics[]; adsLeads?: number; leadSource?: string } & AdsMetrics)[];
       /** Campaigns with delivery that don't carry any product code, per account. */
       unmapped: { account: string; spent: number; campaigns: { name: string; spent: number }[] }[];
       errors: { account: string; error: string }[];
@@ -37,7 +38,7 @@ export async function generateAdsReport(date: string, performanceDate: string): 
   const user = await requireUser();
   if (!can.runAds(user.role)) return { ok: false, error: "Hanya advertiser yang dapat generate laporan iklan." };
   const today = todayISO();
-  const { backfillDays } = await getReportRules();
+  const { backfillDays, cutoff } = await getReportRules();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > today || date < addDays(today, -backfillDays)) {
     return { ok: false, error: "Tanggal laporan tidak valid." };
   }
@@ -85,7 +86,7 @@ export async function generateAdsReport(date: string, performanceDate: string): 
     accounts.map(async (account) => {
       const label = `${account.name} (${PLATFORM_LABEL[account.platform]})`;
       if (account.platform !== "meta" && account.platform !== "google") return;
-      const result = await fetchAccountCampaigns({ platform: account.platform, accountId: account.accountId, lpvConversionAction: account.lpvConversionAction }, performanceDate);
+      const result = await fetchAccountCampaigns({ platform: account.platform, accountId: account.accountId, createdById: account.createdById, lpvConversionAction: account.lpvConversionAction }, performanceDate);
       if (!result.ok) {
         failedAccounts.add(account.id);
         errors.push({ account: label, error: result.error });
@@ -120,6 +121,7 @@ export async function generateAdsReport(date: string, performanceDate: string): 
     }),
   );
 
+  const formCounts = await getFormLeadCounts(performanceDate,performanceDate,[user.id],db,{date,cutoff});
   return {
     ok: true,
     performanceDate,
@@ -134,7 +136,9 @@ export async function generateAdsReport(date: string, performanceDate: string): 
           spent: total.spent,
           impressions: total.impressions,
           clicks: total.clicks,
-          leads: total.leads,
+          adsLeads: total.leads,
+          leadSource: product.formLeadSince && performanceDate >= product.formLeadSince ? "form" : "ads",
+          leads: product.formLeadSince && performanceDate >= product.formLeadSince ? formCounts.find(r=>r.campaignId===product.id)?.leads??0 : total.leads,
           landingPageViews: total.landingPageViews,
         };
       }),

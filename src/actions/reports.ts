@@ -28,6 +28,7 @@ const reportSchema = z.object({
 
 export async function saveReport(_: FormState, formData: FormData): Promise<FormState> {
   const user = await requireUser();
+  if (user.role === "cso") return { error: "CSO mengelola lead melalui menu Leads." };
   // Dual-role members submit each role's part separately; both land on the same daily report.
   const requestedRole = String(formData.get("role") ?? memberRoles(user)[0]);
   const role = memberRoles(user).find((r) => r === requestedRole);
@@ -81,6 +82,7 @@ export async function saveReport(_: FormState, formData: FormData): Promise<Form
     .from(dailyReports)
     .where(and(eq(dailyReports.userId, user.id), eq(dailyReports.date, date)))
     .limit(1);
+  if (existing?.source === "legacy_csv") return { error: "Laporan impor historis hanya dapat dibaca." };
   if (existing?.status === "approved") return { error: "This report is already approved and can't be edited." };
 
   let reportId: number;

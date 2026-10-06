@@ -1,6 +1,7 @@
 import "server-only";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { getFormLeadCounts } from "@/lib/form-lead-metrics";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
@@ -17,6 +18,7 @@ import {
 import type { SessionUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
 import { hasSecondRole } from "@/lib/member-roles";
+import { queueTelegramReport } from "@/lib/telegram";
 import { queueReportMessage } from "@/lib/whatsapp";
 import { todayISO } from "@/lib/kpi";
 import { getReportRules } from "@/lib/report-rules";
@@ -36,6 +38,7 @@ const breakdownSchema = z.object({
 });
 
 const itemSchema = z.object({
+  adsLeads: z.number().int().min(0).nullable().optional(),
   landingPageViews: z.number().int().min(0).nullable().optional(),
   campaignId: z.coerce.number().int().positive(),
   performanceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Periode laporan tidak valid."),
@@ -59,7 +62,7 @@ function consistentBreakdown(item: ItemInput) {
     Math.round(sum("spent")) === Math.round(item.spent) &&
     sum("impressions") === item.impressions &&
     sum("clicks") === item.clicks &&
-    sum("leads") === item.leads &&
+    sum("leads") === (item.adsLeads ?? item.leads) &&
     (item.landingPageViews == null || list.every((c) => c.landingPageViews == null) ||
       (list.every((c) => c.landingPageViews != null) && list.reduce((n, c) => n + c.landingPageViews!, 0) === item.landingPageViews));
   return matches ? list : [];
@@ -88,7 +91,7 @@ export async function saveAdvertiserReport(user: SessionUser, formData: FormData
   const { date, notes } = parsed.data;
 
   const today = todayISO();
-  const { backfillDays } = await getReportRules();
+  const { backfillDays, cutoff } = await getReportRules();
   if (date > today) return { error: "Laporan tidak dapat dibuat untuk tanggal mendatang." };
   if (date < addDays(today, -backfillDays)) {
     return { error: `Laporan hanya dapat diisi mundur maksimal ${backfillDays} hari.` };
@@ -127,6 +130,7 @@ export async function saveAdvertiserReport(user: SessionUser, formData: FormData
     .from(dailyReports)
     .where(and(eq(dailyReports.userId, user.id), eq(dailyReports.date, date)))
     .limit(1);
+  if (existing?.source === "legacy_csv") return { error: "Laporan impor historis hanya dapat dibaca. Data sumber dipertahankan." };
   const metrics = await db
     .select()
     .from(kpiMetrics)
@@ -136,6 +140,11 @@ export async function saveAdvertiserReport(user: SessionUser, formData: FormData
   const advertiserMetricIds = (await db.select({ id: kpiMetrics.id }).from(kpiMetrics).where(eq(kpiMetrics.role, "advertiser"))).map((m) => m.id);
 
   const reportId = await db.transaction(async (tx) => {
+    const lockedProducts = await tx.select().from(campaigns).where(inArray(campaigns.id,campaignIds)).orderBy(asc(campaigns.id)).for("update");
+    for (const product of lockedProducts) campaignById.set(product.id,product);
+    const dates = [...submittedDates].sort();
+    const formCounts = await getFormLeadCounts(dates[0],dates.at(-1)!,[user.id],tx,{date,cutoff});
+
     let id: number;
     if (existing) {
       await tx
@@ -188,7 +197,10 @@ export async function saveAdvertiserReport(user: SessionUser, formData: FormData
             spent: item.spent,
             impressions: item.impressions,
             clicks: item.clicks,
-            leads: item.leads,
+            leads: campaign.formLeadSince && item.performanceDate >= campaign.formLeadSince
+              ? formCounts.find(r => r.campaignId === campaign.id && r.date === item.performanceDate)?.leads ?? 0 : item.leads,
+            adsLeads: campaign.formLeadSince && item.performanceDate >= campaign.formLeadSince ? item.adsLeads ?? null : null,
+            leadSource: campaign.formLeadSince && item.performanceDate >= campaign.formLeadSince ? "form" : "ads",
             landingPageViews: item.landingPageViews ?? null,
           };
         }),
@@ -250,6 +262,9 @@ export async function saveAdvertiserReport(user: SessionUser, formData: FormData
   } catch (error) {
     console.error("Failed to queue WhatsApp report message", error);
   }
+
+  try { await queueTelegramReport(user.id, reportId, Boolean(existing)); }
+  catch { console.error("Failed to queue Telegram report message"); }
 
   revalidatePath("/", "layout");
   redirect(`/reports/${reportId}?saved=1`);

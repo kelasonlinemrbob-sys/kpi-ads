@@ -40,7 +40,7 @@ export function ItemRow({
         <TableCell className="text-right tabular-nums">{formatRupiah(item.spent)}</TableCell>
         <TableCell className="text-right tabular-nums">{formatNumber(item.impressions)}</TableCell>
         <TableCell className="text-right tabular-nums">{formatNumber(item.clicks)}</TableCell>
-        <TableCell className="text-right font-medium tabular-nums">{formatNumber(item.leads)}</TableCell>
+        <TableCell className="text-right font-medium tabular-nums">{formatNumber(item.leads)}{item.leadSource === "form" && <span className="block text-[10px] font-normal text-muted-foreground">Form · Ads {item.adsLeads === null ? "—" : formatNumber(item.adsLeads)}</span>}</TableCell>
         <TableCell className="text-right tabular-nums">{item.landingPageViews === null ? "—" : formatNumber(item.landingPageViews)}</TableCell>
         <TableCell className="text-right tabular-nums">{item.landingPageViews ? formatRupiah(item.spent / item.landingPageViews) : "—"}</TableCell>
       </TableRow>

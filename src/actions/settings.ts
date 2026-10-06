@@ -9,18 +9,20 @@ import { users } from "@/db/schema";
 import { createSession, requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
 import { saveReportRules } from "@/lib/report-rules";
+import { avatarChoiceSchema } from "@/lib/profile-avatar";
 import type { FormState } from "./auth";
 
 const profileSchema = z.object({
+  avatarId: avatarChoiceSchema,
   name: z.string().trim().min(2, "Name is too short").max(120),
   title: z.string().trim().max(120).optional(),
 });
 
 export async function updateProfile(_: FormState, formData: FormData): Promise<FormState> {
-  const user = await requireUser();
-  const parsed = profileSchema.safeParse({ name: formData.get("name"), title: formData.get("title") || undefined });
+  const user = await requireUser(true);
+  const parsed = profileSchema.safeParse({ name: formData.get("name"), title: formData.get("title") || undefined, avatarId: formData.has("avatarId") ? formData.get("avatarId") : undefined });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };
-  await db.update(users).set({ name: parsed.data.name, title: parsed.data.title ?? null }).where(eq(users.id, user.id));
+  await db.update(users).set({ name: parsed.data.name, title: parsed.data.title ?? null, ...(parsed.data.avatarId !== undefined ? { avatarId: parsed.data.avatarId } : {}) }).where(eq(users.id, user.id));
   revalidatePath("/", "layout");
   return { ok: true, message: "Profile updated" };
 }
@@ -34,7 +36,7 @@ const passwordSchema = z
   .refine((d) => d.next === d.confirm, { message: "Konfirmasi password tidak sama." });
 
 export async function changePassword(_: FormState, formData: FormData): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireUser(true);
   const parsed = passwordSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };
   const [row] = await db.select({ hash: users.passwordHash }).from(users).where(eq(users.id, user.id));
@@ -52,7 +54,7 @@ export async function changePassword(_: FormState, formData: FormData): Promise<
 
 /** Signs the member out on every other device (browser sessions carry the version). */
 export async function signOutOtherSessions() {
-  const user = await requireUser();
+  const user = await requireUser(true);
   const [updated] = await db
     .update(users)
     .set({ sessionVersion: sql`${users.sessionVersion} + 1` })
@@ -69,7 +71,7 @@ const rulesSchema = z.object({
 
 /** Settings → Aturan Laporan (supervisor): advertiser report deadline and how far back reports can be filled in. */
 export async function saveReportRulesAction(_: FormState, formData: FormData): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireUser(true);
   if (user.role !== "supervisor") return { error: "Hanya supervisor yang dapat mengubah aturan laporan." };
   const parsed = rulesSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };

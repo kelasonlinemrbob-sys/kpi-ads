@@ -140,3 +140,37 @@
   background-repeat: repeat-x;
   height: 1px;
 }
+
+/* Order form theme: tokens are set inline from the saved appearance (see order-form-frame.tsx). */
+@layer components {
+  .of-root {
+    --of-line: color-mix(in srgb, var(--of-text) 14%, var(--of-bg));
+    --of-muted: color-mix(in srgb, var(--of-text) 64%, var(--of-bg));
+    color: var(--of-text);
+    font-family: var(--of-font);
+  }
+  .of-card { background: var(--of-bg); overflow: hidden; }
+  .of-card[data-layout="card"] { border: 1px solid var(--of-line); border-radius: var(--of-card-radius); box-shadow: 0 1px 3px rgb(0 0 0 / 0.06); }
+  .of-muted { color: var(--of-muted); }
+  .of-line { border-color: var(--of-line); }
+  .of-benefits { background: color-mix(in srgb, var(--of-text) 4%, var(--of-bg)); border-bottom: 1px solid var(--of-line); color: var(--of-muted); }
+  .of-field {
+    width: 100%; min-height: 3rem; padding: 0.75rem 0.875rem; font: inherit; font-size: 1rem; color: var(--of-text);
+    border-radius: var(--of-field-radius); outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .of-field::placeholder { color: color-mix(in srgb, var(--of-text) 45%, var(--of-bg)); }
+  .of-field[data-variant="filled"] { background: color-mix(in srgb, var(--of-text) 4%, var(--of-bg)); border: 1px solid var(--of-line); }
+  .of-field[data-variant="outline"] { background: var(--of-bg); border: 1.5px solid color-mix(in srgb, var(--of-text) 24%, var(--of-bg)); }
+  .of-field[data-variant="underline"] { background: transparent; border: 0; border-bottom: 2px solid color-mix(in srgb, var(--of-text) 24%, var(--of-bg)); border-radius: 0; padding-inline: 0.125rem; }
+  .of-field:focus-visible { border-color: var(--of-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--of-accent) 25%, transparent); }
+  .of-field[data-variant="underline"]:focus-visible { box-shadow: 0 2px 0 0 var(--of-accent); }
+  .of-button {
+    display: flex; width: 100%; min-height: 3rem; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.75rem 1rem;
+    border-radius: var(--of-field-radius); font-size: 1rem; font-weight: 600; text-align: center; transition: filter 0.15s;
+  }
+  .of-button[data-variant="solid"] { background: var(--of-accent); color: var(--of-accent-fg); }
+  .of-button[data-variant="outline"] { background: transparent; color: var(--of-accent); border: 2px solid var(--of-accent); }
+  .of-button:hover:not(:disabled) { filter: brightness(0.94); }
+  .of-button:focus-visible { outline: 2px solid var(--of-accent); outline-offset: 2px; }
+  .of-button:disabled { opacity: 0.6; }
+}

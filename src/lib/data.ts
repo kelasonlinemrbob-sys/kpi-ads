@@ -1,4 +1,5 @@
 import "server-only";
+import { getFormLeadCounts } from "./form-lead-metrics";
 import { cache } from "react";
 import { and, asc, desc, eq, gte, inArray, isNotNull, lte, ne, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -52,7 +53,7 @@ export const getMembers = cache(async (includeInactive = false, includeSuperviso
   db
     .select({
       id: users.id,
-      name: users.name,
+      name: users.name, avatarId: users.avatarId,
       email: users.email,
       role: users.role,
       advertiserLevel: users.advertiserLevel,
@@ -64,7 +65,7 @@ export const getMembers = cache(async (includeInactive = false, includeSuperviso
       createdAt: users.createdAt,
     })
     .from(users)
-    .where(and(includeSupervisors ? undefined : ne(users.role, "supervisor"), includeInactive ? undefined : eq(users.isActive, true)))
+    .where(and(ne(users.role, "cso"), includeSupervisors ? undefined : ne(users.role, "supervisor"), includeInactive ? undefined : eq(users.isActive, true)))
     .orderBy(asc(users.name)),
 );
 
@@ -72,7 +73,7 @@ export type Member = Awaited<ReturnType<typeof getMembers>>[number];
 
 export async function getAllUsers() {
   return db
-    .select({ id: users.id, name: users.name, role: users.role, isActive: users.isActive })
+    .select({ id: users.id, name: users.name, avatarId: users.avatarId, role: users.role, isActive: users.isActive })
     .from(users)
     .orderBy(asc(users.name));
 }
@@ -93,7 +94,7 @@ export async function getEntries(start: string, end: string, userIds?: number[])
   // Ads belong to their performance date, including the weekend reported on Monday.
   // Replace legacy report-date totals whenever source product rows are available.
   const ads = await db.select({
-    reportId: dailyReports.id, userId: dailyReports.userId, date: advertiserReportItems.performanceDate,
+    reportId: dailyReports.id, userId: dailyReports.userId, date: advertiserReportItems.performanceDate, campaignId: advertiserReportItems.campaignId,
     spent: advertiserReportItems.spent, leads: advertiserReportItems.leads, lpv: advertiserReportItems.landingPageViews,
   }).from(advertiserReportItems).innerJoin(dailyReports, eq(dailyReports.id, advertiserReportItems.reportId)).where(and(
     eq(advertiserReportItems.window, "previous_day"),
@@ -118,6 +119,14 @@ export async function getEntries(start: string, end: string, userIds?: number[])
       const value = group.reduce((sum, r) => sum + (metric.key === "ad_spend" ? r.spent : metric.key === "leads" ? r.leads : r.lpv ?? 0), 0);
       result.push({ userId: first.userId, metricId: metric.id, date: first.date, value });
     }
+  }
+  // Form leads also count before the advertiser has submitted an Ads report.
+  // Already represented product/day rows are excluded to prevent double counting.
+  const formCounts = await getFormLeadCounts(start,end,userIds);
+  const represented = new Set(ads.map(row => `${row.userId}:${row.campaignId}:${row.date}`));
+  const leadMetric = metrics.find(m => m.role === "advertiser" && m.key === "leads");
+  if (leadMetric) for (const row of formCounts) if (!represented.has(`${row.userId}:${row.campaignId}:${row.date}`)) {
+    result.push({userId:row.userId,metricId:leadMetric.id,date:row.date,value:row.leads});
   }
   const taskMetric = metrics.find((m) => m.key === "task_completion");
   if (taskMetric) {
@@ -150,7 +159,7 @@ export async function getTargetMap(period: string, userIds?: number[]) {
 export type RoleScore = RoleSlot & { score: number | null; prevScore: number | null; results: MetricResult[] };
 
 export type Scorecard = {
-  member: Pick<Member, "id" | "name" | "email" | "role" | "title"> & Partial<Pick<Member, "secondaryRole" | "secondaryShare" | "advertiserLevel">>;
+  member: Pick<Member, "id" | "name" | "email" | "role" | "title"> & Partial<Pick<Member, "secondaryRole" | "secondaryShare" | "advertiserLevel" | "avatarId">>;
   /** Combined score: each role's score weighted by its share (just the role's score for one role). */
   score: number | null;
   prevScore: number | null;

@@ -50,7 +50,7 @@ export async function AdvertiserReports({
   const editableFrom = addDays(today, -backfillDays);
 
   const reports = await db
-    .select({ id: dailyReports.id, date: dailyReports.date, summary: dailyReports.summary })
+    .select({ id: dailyReports.id, date: dailyReports.date, summary: dailyReports.summary, source: dailyReports.source })
     .from(dailyReports)
     .where(and(eq(dailyReports.userId, userId), gte(dailyReports.date, start), lte(dailyReports.date, end)));
   const reportIds = reports.map((r) => r.id);
@@ -79,7 +79,7 @@ export async function AdvertiserReports({
       const reportItems = report ? items.filter((i) => i.reportId === report.id) : [];
       const savedDates = new Set(reportItems.map((i) => i.performanceDate));
       const metrics = report ? (metricsByReport.get(report.id) ?? null) : null;
-      const periods = advertiserReportWindows(date, cutoff).map((p) => ({
+      const periods = report?.source === "legacy_csv" ? [{ label: "Arsip CSV", performanceDate: date, saved: true }] : advertiserReportWindows(date, cutoff).map((p) => ({
         label: DAY_SHORT[p.label] ?? p.label,
         performanceDate: p.performanceDate,
         // Older reports without item rows count as complete: they were filled in the previous format.
@@ -95,7 +95,7 @@ export async function AdvertiserReports({
           : "partial";
       return {
         date,
-        editable: date >= editableFrom,
+        editable: date >= editableFrom && report?.source !== "legacy_csv",
         reportId: report?.id ?? null,
         summary: report?.summary ?? null,
         periods,

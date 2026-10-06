@@ -26,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Panel } from "@/components/dashboard/panel";
 import { useTheme, type ThemeMode } from "@/components/theme-provider";
+import { AvatarPicker } from "@/components/avatar-picker";
 import { UserAvatar } from "@/components/user-avatar";
 
 function useToast(state: FormState, onOk?: () => void) {
@@ -42,12 +43,14 @@ function useToast(state: FormState, onOk?: () => void) {
 
 export function ProfileSection({
   name,
+  avatarId,
   title,
   email,
   roles,
   facts,
 }: {
   name: string;
+  avatarId: number | null;
   title: string | null;
   email: string;
   /** e.g. ["Advertiser Junior 60%", "SEO Specialist 40%"] */
@@ -55,13 +58,15 @@ export function ProfileSection({
   facts: { label: string; value: string }[];
 }) {
   const [state, action, pending] = useActionState(updateProfile, undefined);
-  useToast(state);
+  const router = useRouter();
+  const [selectedAvatar, setSelectedAvatar] = React.useState(avatarId);
+  useToast(state, () => router.refresh());
 
   return (
     <div className="grid gap-3">
       <Panel title="Akun" icon={UserIcon} iconPosition="left">
         <div className="flex flex-wrap items-center gap-4 p-4">
-          <UserAvatar name={name} className="size-14 text-base" />
+          <UserAvatar name={name} avatarId={avatarId} className="size-14 text-base" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-lg font-medium">{name}</p>
             <p className="truncate text-sm text-muted-foreground">{email}</p>
@@ -85,7 +90,8 @@ export function ProfileSection({
       </Panel>
 
       <Panel title="Profil" bodyClassName="p-4">
-        <form action={action} className="grid gap-3">
+        <form action={action} className="grid gap-4">
+          <AvatarPicker name={name} value={selectedAvatar} onChange={setSelectedAvatar} disabled={pending} />
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-2">
               <Label htmlFor="s-name">Nama lengkap</Label>

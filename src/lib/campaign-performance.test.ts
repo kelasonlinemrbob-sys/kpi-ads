@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { after, test, mock } from "node:test";
+import { encryptSecret } from "./secret-box";
 import { db } from "@/db";
-mock.method(db.$client, "query", async () => ({ rows: [] }));
+process.env.AUTH_SECRET = "fixture-encryption-key";
+mock.method(db.$client, "query", async () => ({ rows: [
+  ["user.1.google.connection", encryptSecret(JSON.stringify({ credentials: { clientId: "test-only", clientSecret: "test-only", refreshToken: "test-only", loginCustomerId: "" } })), 1, new Date().toISOString()],
+  ["user.1.meta.access_token", encryptSecret("meta-test-secret"), 1, new Date().toISOString()],
+] }));
+
 import { fetchCampaignPerformance, parseMetaCampaign } from "./campaign-performance";
 after(async () => { await db.$client.end(); });
 test("Meta keeps overlapping aliases, all/link clicks, chat and leads separate", () => {
@@ -24,7 +30,7 @@ test("Google requests full range, keeps conversions separate from Meta leads and
     return Response.json([{ results: [{ campaign: { id: "123" }, metrics: { costMicros: "100000000000", impressions: "1000", clicks: "200", conversions: 5.5 } }] }]);
   };
   try {
-    const result = await fetchCampaignPerformance({ platform: "google", accountId: "123" }, "2026-10-01", "2026-10-05");
+    const result = await fetchCampaignPerformance({ createdById: 1, platform: "google", accountId: "123" }, "2026-10-01", "2026-10-05");
     assert.ok(result.ok); if (!result.ok) return;
     assert.equal(result.campaigns[0].metrics.conversions, 5.5);
     assert.equal(result.campaigns[0].metrics.leads, null); assert.equal(result.campaigns[0].metrics.landingPageViews, null);
@@ -34,6 +40,6 @@ test("Google requests full range, keeps conversions separate from Meta leads and
   } finally { global.fetch = original; }
 });
 test("invalid ranges rejected before any API request", async () => {
-  assert.equal((await fetchCampaignPerformance({ platform: "google", accountId: "1" }, "invalid", "2026-10-01")).ok, false);
-  assert.equal((await fetchCampaignPerformance({ platform: "meta", accountId: "1" }, "2026-10-05", "2026-10-01")).ok, false);
+  assert.equal((await fetchCampaignPerformance({ createdById: 1, platform: "google", accountId: "1" }, "invalid", "2026-10-01")).ok, false);
+  assert.equal((await fetchCampaignPerformance({ createdById: 1, platform: "meta", accountId: "1" }, "2026-10-05", "2026-10-01")).ok, false);
 });

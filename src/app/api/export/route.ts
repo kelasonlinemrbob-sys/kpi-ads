@@ -12,6 +12,7 @@ const csv = (v: unknown) => {
 export async function GET(req: Request) {
   const user = await getCurrentUser();
   if (!user) return new Response("Unauthorized", { status: 401 });
+  if (user.role === "cso") return new Response("Forbidden", {status:403});
   const params = new URL(req.url).searchParams;
   const p = params.get("period") ?? "";
   const period = isPeriod(p) ? p : currentPeriod();

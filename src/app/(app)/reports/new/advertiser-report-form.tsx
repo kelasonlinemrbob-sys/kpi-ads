@@ -30,6 +30,8 @@ export type AdvertiserCampaignOption = {
   status: Campaign["status"];
   /** Linked to a Meta/Google campaign ID, so its numbers can be generated from the ads API. */
   linked: boolean;
+  formLeadSince?: string | null;
+  formLeads?: Record<string,number>;
 };
 
 export type CampaignBreakdown = {
@@ -43,6 +45,8 @@ export type CampaignBreakdown = {
 };
 
 export type AdvertiserReportItemValue = {
+  adsLeads?: number | null;
+  leadSource?: string;
   landingPageViews: number | null;
   id: number;
   campaignId: number;
@@ -56,6 +60,8 @@ export type AdvertiserReportItemValue = {
 };
 
 type FormRow = {
+  adsLeads?: number | null;
+  leadSource?: string;
   landingPageViews: string;
   key: string;
   campaignId: string;
@@ -89,12 +95,13 @@ function emptyRow(period: string, key: string, campaign?: AdvertiserCampaignOpti
     spent: "",
     impressions: "",
     clicks: "",
-    leads: "",
+    leads: campaign?.formLeadSince && period >= campaign.formLeadSince ? String(campaign.formLeads?.[period]??0) : "",
+    leadSource: campaign?.formLeadSince && period >= campaign.formLeadSince ? "form" : "ads",
     landingPageViews: "",
   };
 }
 
-const isBlank = (row: FormRow) => METRIC_FIELDS.every((field) => row[field] === "") && row.landingPageViews === "";
+const isBlank = (row: FormRow) => METRIC_FIELDS.every((field) => field === "leads" && row.leadSource === "form" ? true : row[field] === "") && row.landingPageViews === "";
 const isComplete = (row: FormRow) => Boolean(row.campaignId) && METRIC_FIELDS.every((field) => row[field] !== "");
 
 export function AdvertiserReportForm({
@@ -155,6 +162,8 @@ export function AdvertiserReportForm({
         impressions: String(item.impressions),
         clicks: String(item.clicks),
         leads: String(item.leads),
+        adsLeads: item.adsLeads,
+        leadSource: item.leadSource,
         landingPageViews: item.landingPageViews === null ? "" : String(item.landingPageViews),
         ...(item.campaigns.length ? { fromApi: true, campaigns: item.campaigns } : {}),
       }));
@@ -200,7 +209,7 @@ export function AdvertiserReportForm({
           const hit = generated.get(row.campaignId);
           if (hit) {
             generated.delete(row.campaignId);
-            return [{ ...row, platform: hit.platform, ...toStrings(hit), fromApi: true, campaigns: hit.campaigns }];
+            return [{ ...row, platform: hit.platform, ...toStrings(hit), adsLeads:hit.adsLeads, leadSource:hit.leadSource, fromApi: true, campaigns: hit.campaigns }];
           }
           return isBlank(row) ? [] : [row];
         });
@@ -208,7 +217,7 @@ export function AdvertiserReportForm({
           ...emptyRow(period, `new-${nextKey.current++}`),
           campaignId: String(hit.campaignId),
           platform: hit.platform,
-          ...toStrings(hit),
+          ...toStrings(hit), adsLeads:hit.adsLeads, leadSource:hit.leadSource,
           fromApi: true,
           campaigns: hit.campaigns,
         }));
@@ -238,6 +247,7 @@ export function AdvertiserReportForm({
     impressions: Number(row.impressions),
     clicks: Number(row.clicks),
     leads: Number(row.leads),
+    adsLeads: row.adsLeads,
     landingPageViews: row.landingPageViews === "" ? null : Number(row.landingPageViews),
   }));
 
@@ -565,7 +575,7 @@ function ReportTable({
                   onValueChange={(campaignId) => {
                     if (campaignId === NEW_PRODUCT) return onCreateProduct(row.key);
                     const campaign = campaigns.find((option) => String(option.id) === campaignId);
-                    onChange(row.key, { campaignId, platform: campaign?.platform ?? row.platform });
+                    onChange(row.key, { campaignId, platform: campaign?.platform ?? row.platform, leadSource:campaign?.formLeadSince && row.period>=campaign.formLeadSince?"form":"ads", adsLeads:null, leads:campaign?.formLeadSince && row.period>=campaign.formLeadSince?String(campaign.formLeads?.[row.period]??0):"" });
                   }}
                   disabled={locked}
                 >
@@ -595,7 +605,7 @@ function ReportTable({
               <NumberField label="Spent (Rp)" value={row.spent} disabled={locked} onChange={(spent) => onChange(row.key, { spent })} />
               <NumberField label="Impression" value={row.impressions} disabled={locked} onChange={(impressions) => onChange(row.key, { impressions })} />
               <NumberField label="Click" value={row.clicks} disabled={locked} onChange={(clicks) => onChange(row.key, { clicks })} />
-              <NumberField label="Lead" value={row.leads} disabled={locked} onChange={(leads) => onChange(row.key, { leads })} />
+              <div><NumberField label={row.leadSource === "form" ? "Lead Form" : "Lead Ads"} value={row.leads} disabled={locked || row.leadSource === "form"} onChange={(leads) => onChange(row.key, { leads })} />{row.leadSource === "form" && <p className="mt-1 text-right text-[10px] text-muted-foreground">Form · Ads {row.adsLeads ?? "—"}</p>}</div>
               <CompactField label="CPR (Rp)">
                 <span className="flex h-8 items-center text-sm tabular-nums text-muted-foreground lg:justify-end" title="Spent ÷ Lead">
                   {cpr === null ? "—" : formatId(cpr)}

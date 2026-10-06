@@ -100,9 +100,9 @@ async function request(url: URL) {
 }
 
 /** Request one aggregate window, page cautiously, then fetch metadata ONLY for ads in that window. */
-export async function fetchMetaAdContents(accountId: string, start = creativePeriod().start, end = creativePeriod().end): Promise<AdContentResult> {
+export async function fetchMetaAdContents(accountId: string, start: string, end: string, userId: number | null): Promise<AdContentResult> {
   if (!validCreativeRange(start, end)) return { ok: false, error: "Periode Creative harus valid dan maksimal 30 hari." };
-  const token = await getMetaToken();
+  const token = await getMetaToken(userId);
   if (!token) return { ok: false, error: META_TOKEN_MISSING };
   const root = `https://graph.facebook.com/${META_API_VERSION}`;
   const insightsUrl = new URL(`${root}/act_${accountId.replace(/\D/g, "")}/insights`);

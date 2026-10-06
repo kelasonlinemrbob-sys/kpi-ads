@@ -66,20 +66,21 @@ export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
   }
   const [user] = await db.select().from(users).where(eq(users.id, uid)).limit(1);
   // A session from before "sign out everywhere" / a password change no longer counts.
-  if (!user || !user.isActive || user.sessionVersion !== sv) return null;
+  if (!user || user.invitationPending || !user.isActive || user.sessionVersion !== sv) return null;
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { passwordHash, ...rest } = user;
   return rest;
 });
 
-export async function requireUser() {
+export async function requireUser(allowCso = false) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
+  if (user.role === "cso" && !allowCso) redirect("/leads");
   return user;
 }
 
 export async function requireRole(...roles: Role[]) {
-  const user = await requireUser();
+  const user = await requireUser(true);
   if (!roles.includes(user.role)) redirect("/dashboard");
   return user;
 }

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { and, count, desc, eq, gte, inArray, lte, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, lte, sql, type SQL } from "drizzle-orm";
 import { CalendarIcon, ClipboardPenIcon, MessageCircleIcon, UserIcon } from "lucide-react";
 import { db } from "@/db";
 import { dailyReports, kpiEntries, users, waSessions } from "@/db/schema";
@@ -9,7 +9,7 @@ import { getMembers, getMetrics, reviewedMemberSql } from "@/lib/data";
 import { hasSecondRole, needsReview } from "@/lib/member-roles";
 import { getReportRules } from "@/lib/report-rules";
 import { ROLE_LABEL } from "@/lib/roles";
-import { periodRange, todayISO } from "@/lib/kpi";
+import { periodRange, periodLabel, todayISO } from "@/lib/kpi";
 import { resolveReportRange } from "@/lib/reporting";
 import { resolvePeriod } from "@/lib/period";
 import { cn, formatValue } from "@/lib/utils";
@@ -40,11 +40,16 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const memberFilter = isSupervisor ? (sp.user ? Number(sp.user) : null) : user.id;
   const page = Math.max(1, Number(sp.page) || 1);
 
+  const historicalMonths = (await db.selectDistinct({ month: sql<string>`to_char(${dailyReports.date}, 'YYYY-MM')` })
+    .from(dailyReports).where(isSupervisor && sp.view !== "mine" ? undefined : eq(dailyReports.userId, user.id)))
+    .map((r) => r.month).sort().reverse();
+  for (const value of historicalMonths) if (!options.some((o) => o.value === value)) options.push({ value, label: periodLabel(value) });
+
   // A dual-role advertiser (e.g. + SEO) can switch to the plain list to follow the review of their other part.
   const dualAdvertiser = user.role === "advertiser" && hasSecondRole(user);
   if ((isSupervisor && sp.view === "mine") || (user.role === "advertiser" && !(dualAdvertiser && sp.view === "all"))) {
     const filter = sp.filter === "todo" ? "todo" : "all";
-    const { range, options: rangeOptions } = resolveReportRange(sp.range, todayISO());
+    const { range, options: rangeOptions } = resolveReportRange(sp.range, todayISO(), historicalMonths);
     const [wa] = await db.select().from(waSessions).where(eq(waSessions.userId, user.id));
     const waReady = wa?.status === "connected" && !!wa.groupJid && wa.autoSend;
     const href = (next: "all" | "todo") => {
@@ -131,7 +136,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         status: dailyReports.status,
         summary: dailyReports.summary,
         userId: users.id,
-        name: users.name,
+        name: users.name, avatarId: users.avatarId,
         role: users.role,
         secondaryRole: users.secondaryRole,
         createdAt: dailyReports.createdAt,

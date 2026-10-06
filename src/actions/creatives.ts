@@ -18,14 +18,14 @@ export async function syncCreatives(periodKey: string = "7d") {
   if (!can.viewCreatives(user.role)) return { ok: false as const, error: "Kamu tidak punya akses ke halaman Creative." };
   if (!CREATIVE_PERIODS.some((p) => p.value === periodKey)) return { ok: false as const, error: "Pilih periode 7, 14, atau 30 hari." };
   const period = creativePeriod(periodKey);
-  const accounts = await db.select().from(adAccounts).where(eq(adAccounts.platform, "meta"));
+  const accounts = await db.select().from(adAccounts).where(and(eq(adAccounts.platform, "meta"), user.role === "advertiser" ? eq(adAccounts.createdById, user.id) : undefined));
   if (!accounts.length) return { ok: false as const, error: "Belum ada akun Meta. Tambahkan di Campaigns → Akun iklan." };
   const results: { account: string; count: number; error: string | null }[] = [];
   // Account requests are sequential to avoid bursts against the same Meta token.
   for (const account of accounts) {
     const startedAt = new Date();
     try {
-      const res = await fetchMetaAdContents(account.accountId, period.start, period.end);
+      const res = await fetchMetaAdContents(account.accountId, period.start, period.end, account.createdById);
       if (!res.ok) { results.push({ account: account.name, count: 0, error: res.error }); continue; }
       await saveCreativeSnapshot(account.id, period.start, period.end, res.ads, startedAt);
       results.push({ account: account.name, count: res.ads.length, error: null });

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { getFormLeadCounts } from "@/lib/form-lead-metrics";
 import { and, asc, eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
@@ -59,6 +60,8 @@ export default async function NewReportPage({
     .limit(1);
 
 
+  if (existing?.source === "legacy_csv") redirect(`/reports/${existing.id}`);
+
   if (role === "advertiser") {
     const [ownedCampaigns, existingItems] = await Promise.all([
       db.select().from(campaigns).where(eq(campaigns.ownerId, user.id)).orderBy(asc(campaigns.product), asc(campaigns.name)),
@@ -70,12 +73,16 @@ export default async function NewReportPage({
             .orderBy(asc(advertiserReportItems.performanceDate), asc(advertiserReportItems.id))
         : Promise.resolve([]),
     ]);
+    const reportDates = advertiserReportWindows(date,rules.cutoff).map(p=>p.performanceDate).sort();
+    const formCounts = await getFormLeadCounts(reportDates[0],reportDates.at(-1)!,[user.id],db,{date,cutoff:rules.cutoff});
     const itemCampaigns = await getItemCampaigns(existingItems.map((item) => item.id));
     const usedCampaignIds = new Set(existingItems.map((item) => item.campaignId));
     const campaignOptions = ownedCampaigns
       .filter((campaign) => campaign.status !== "ended" || usedCampaignIds.has(campaign.id))
       .map((campaign) => ({
         id: campaign.id,
+        formLeadSince: campaign.formLeadSince,
+        formLeads: Object.fromEntries(formCounts.filter(r=>r.campaignId===campaign.id).map(r=>[r.date,r.leads])),
         name: campaign.name,
         product: campaign.product?.trim() || campaign.name,
         platform: campaign.platform,
@@ -135,6 +142,8 @@ export default async function NewReportPage({
             impressions: item.impressions,
             clicks: item.clicks,
             leads: item.leads,
+            adsLeads: item.adsLeads,
+            leadSource: item.leadSource,
             landingPageViews: item.landingPageViews,
             campaigns: (itemCampaigns.get(item.id) ?? []).map((c) => ({
               id: c.externalId,

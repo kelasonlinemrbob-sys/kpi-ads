@@ -33,7 +33,7 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
   if (!Number.isInteger(id)) notFound();
 
   const [row] = await db
-    .select({ report: dailyReports, member: { id: users.id, name: users.name, role: users.role, secondaryRole: users.secondaryRole, title: users.title }, reviewerName: reviewer.name })
+    .select({ report: dailyReports, member: { id: users.id, name: users.name, avatarId: users.avatarId, role: users.role, secondaryRole: users.secondaryRole, title: users.title }, reviewerName: reviewer.name })
     .from(dailyReports)
     .innerJoin(users, eq(users.id, dailyReports.userId))
     .leftJoin(reviewer, eq(reviewer.id, dailyReports.reviewerId))
@@ -65,7 +65,7 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
   const seoValues = Object.fromEntries(metrics.filter((m) => m.role === "seo").map((m) => [m.key, aggregate(m, asEntries, byKey)]));
   const requiresReview = needsReview(member);
   const rules = await getReportRules();
-  const canEdit = user.id === report.userId && (!requiresReview || report.status !== "approved") && report.date >= addDays(todayISO(), -rules.backfillDays);
+  const canEdit = report.source !== "legacy_csv" && user.id === report.userId && (!requiresReview || report.status !== "approved") && report.date >= addDays(todayISO(), -rules.backfillDays);
 
   return (
     <>
@@ -91,6 +91,8 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
         }
       />
 
+      {report.source === "legacy_csv" && <p className="mb-3 rounded-lg border bg-muted/40 p-3 text-sm">Laporan diimpor dari CSV historis. Tanggal dan angka mengikuti sumber; hanya baris valid yang dimasukkan. Duplikat dan data bermasalah dipisahkan untuk pemeriksaan.</p>}
+
       {waMessage && (
         <p className="mb-3 flex items-center gap-2 text-sm text-muted-foreground">
           <MessageCircleIcon
@@ -109,6 +111,7 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
           {(roles.includes("webmaster") || report.webmasterTasks.length > 0) && <WebmasterReportDetail items={report.webmasterTasks} />}
           {roles.includes("advertiser") && advertiserItems.length > 0 && (
             <AdvertiserReportDetail
+              historical={report.source === "legacy_csv"}
               reportDate={report.date}
               cutoff={rules.cutoff}
               items={advertiserItems.map((item) => ({ ...item, campaigns: itemCampaigns.get(item.id) ?? [] }))}
@@ -156,7 +159,7 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
           {roles.includes("seo") && <SeoDailyTargets targets={seoTargets} values={seoValues} />}
           <Panel title="Member">
             <div className="flex items-center gap-3 p-4">
-              <UserAvatar name={member.name} className="size-11" />
+              <UserAvatar name={member.name} avatarId={member.avatarId} className="size-11" />
               <div>
                 <p className="font-medium">{member.name}</p>
                 <p className="text-sm text-muted-foreground">{member.title ?? ROLE_LABEL[member.role]}</p>

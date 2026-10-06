@@ -27,7 +27,7 @@ export async function takeResetQuota(tx: ResetDb, scope: string, limit: number, 
 
 /** Call inside a transaction so issuance and resetting serialize on the same user row. */
 export async function issuePasswordReset(tx: ResetDb, email: string, now = new Date()) {
-  const [user] = await tx.select().from(users).where(and(eq(users.email, email), eq(users.isActive, true))).limit(1).for("update");
+  const [user] = await tx.select().from(users).where(and(eq(users.email, email), eq(users.isActive, true), eq(users.invitationPending, false))).limit(1).for("update");
   if (!user) return null;
   await tx.delete(passwordResetTokens).where(eq(passwordResetTokens.userId, user.id));
   const token = randomBytes(32).toString("hex");
@@ -43,7 +43,7 @@ export async function resetTokenIsUsable(tx: ResetDb, token: string, now = new D
   const [row] = await tx.select({ id: users.id }).from(passwordResetTokens)
     .innerJoin(users, eq(users.id, passwordResetTokens.userId))
     .where(and(eq(passwordResetTokens.tokenHash, resetTokenHash(token)), isNull(passwordResetTokens.usedAt),
-      gt(passwordResetTokens.expiresAt, now), eq(users.isActive, true), eq(users.sessionVersion, passwordResetTokens.sessionVersion))).limit(1);
+      gt(passwordResetTokens.expiresAt, now), eq(users.isActive, true), eq(users.invitationPending, false), eq(users.sessionVersion, passwordResetTokens.sessionVersion))).limit(1);
   return !!row;
 }
 
@@ -56,7 +56,7 @@ export async function applyPasswordReset(tx: ResetDb, token: string, passwordHas
   if (!lookup) return false;
   // Same lock order as issuance: user first, token second.
   const [user] = await tx.select().from(users).where(eq(users.id, lookup.userId)).limit(1).for("update");
-  if (!user?.isActive) return false;
+  if (!user?.isActive || user.invitationPending) return false;
   const [tokenRow] = await tx.select().from(passwordResetTokens).where(and(
     eq(passwordResetTokens.tokenHash, hash), isNull(passwordResetTokens.usedAt),
     gt(passwordResetTokens.expiresAt, now), eq(passwordResetTokens.sessionVersion, user.sessionVersion),

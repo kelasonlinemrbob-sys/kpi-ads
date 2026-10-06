@@ -26,7 +26,7 @@ export default async function AppraisalsPage() {
 
   const reviewer = alias(users, "reviewer");
   const rows = await db
-    .select({ appraisal: performanceAppraisals, name: users.name, reviewerName: reviewer.name })
+    .select({ appraisal: performanceAppraisals, name: users.name, avatarId: users.avatarId, reviewerName: reviewer.name })
     .from(performanceAppraisals)
     .innerJoin(users, eq(users.id, performanceAppraisals.userId))
     .leftJoin(reviewer, eq(reviewer.id, performanceAppraisals.reviewerId))
@@ -84,11 +84,11 @@ export default async function AppraisalsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map(({ appraisal: a, name, reviewerName }) => (
+                {rows.map(({ appraisal: a, name, avatarId, reviewerName }) => (
                   <TableRow key={a.id} className="relative">
                     <TableCell>
                       <Link href={`/appraisals/${a.id}`} className="flex items-center gap-3 font-medium after:absolute after:inset-0">
-                        <UserAvatar name={name} className="size-8" />
+                        <UserAvatar name={name} avatarId={avatarId} className="size-8" />
                         {name}
                       </Link>
                     </TableCell>

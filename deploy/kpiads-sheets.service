@@ -1,0 +1,19 @@
+[Unit]
+Description=KPI Ads full-day report sync to Google Sheets
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=kpiads
+Group=kpiads
+WorkingDirectory=/srv/kpiads/current
+ExecStart=/usr/local/bin/node --env-file=/srv/kpiads/shared/.env --conditions=react-server --import tsx src/sheets/sync.mts
+TimeoutStartSec=10min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/kpiads
+UMask=0027

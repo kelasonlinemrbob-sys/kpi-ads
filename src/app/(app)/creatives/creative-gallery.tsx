@@ -37,7 +37,7 @@ export function CreativeGallery({ posts, people }: { posts: CreativePost[]; peop
 
   return (
     <>
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">
+      <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,220px),1fr))] gap-3">
         {posts.map((post) => {
           const rates = creativeRates(sumCreatives([post]));
           const video = post.format === "video";

@@ -67,6 +67,7 @@ export function aggregate(
     const num = metricsByKey.get(metric.numeratorKey ?? "");
     const den = metricsByKey.get(metric.denominatorKey ?? "");
     if (!num || !den) return null;
+    if (!entries.some(e => e.metricId === num.id) || !entries.some(e => e.metricId === den.id)) return null;
     // A partial LPV denominator would overstate cost; missing LPV is not zero.
     if (metric.key === "cplv" && entries.some((e) => e.metricId === num.id &&
       !entries.some((v) => v.metricId === den.id && v.userId === e.userId && v.date === e.date))) return null;

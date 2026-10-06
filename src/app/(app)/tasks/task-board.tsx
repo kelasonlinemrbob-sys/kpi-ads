@@ -47,6 +47,7 @@ export type TaskCard = {
   dueDate: string | null;
   assigneeId: number;
   assigneeName: string;
+  assigneeAvatarId?: number | null;
   createdById: number;
   creatorName: string;
   campaignId: number | null;
@@ -199,7 +200,7 @@ export function TaskBoard({
                           </span>
                         )}
                         <span className="ml-auto" title={`Assigned to ${t.assigneeName} by ${t.creatorName}`}>
-                          <UserAvatar name={t.assigneeName} className="size-5 text-[9px]" />
+                          <UserAvatar name={t.assigneeName} avatarId={t.assigneeAvatarId} className="size-5 text-[9px]" />
                         </span>
                       </div>
                       {approving ? (

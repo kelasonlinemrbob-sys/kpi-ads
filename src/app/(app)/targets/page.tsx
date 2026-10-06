@@ -1,72 +1,29 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/auth";
 import { getMembers, getMetrics, getTargetMap } from "@/lib/data";
-import { hasRole, roleSlots } from "@/lib/member-roles";
-import { MEMBER_ROLES, ROLE_LABEL } from "@/lib/roles";
-import { resolvePeriod } from "@/lib/period";
-import { cn } from "@/lib/utils";
-import { PageHeader } from "@/components/dashboard/panel";
-import { PeriodSelect } from "@/components/dashboard/period-select";
-import { TargetsForm } from "./targets-form";
+import { resolveMemberTargetPeriod } from "@/lib/member-targets";
+import { roleLabel } from "@/lib/roles";
+import { PageHeader, Panel } from "@/components/dashboard/panel";
+import { MemberTargetsForm } from "./member-targets-form";
 
-export const metadata: Metadata = { title: "KPI Targets" };
-
+export const metadata: Metadata = { title: "Target KPI Anggota" };
 export default async function TargetsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   await requireRole("supervisor");
   const sp = await searchParams;
-  const { period, options } = resolvePeriod(sp.period);
-  const role = MEMBER_ROLES.find((r) => r === sp.role) ?? "advertiser";
-  const [metrics, members] = await Promise.all([getMetrics(), getMembers(false, true)]);
-  const roleMetrics = metrics.filter((m) => m.role === role);
-  // Members holding the role as main or second role; the second role's defaults are prorated by its share.
-  const roleMembers = members.filter((m) => hasRole(m, role));
-  const targets = await getTargetMap(period, roleMembers.map((m) => m.id));
-
-  return (
-    <>
-      <PageHeader
-        title="KPI Targets"
-        description="Monthly targets and weights per role. Leave a member's cell empty to use the role default."
-        actions={<PeriodSelect value={period} options={options} />}
-      />
-      <div className="mb-3 flex gap-1 overflow-x-auto rounded-xl border bg-muted/50 p-1 sm:w-fit">
-        {MEMBER_ROLES.map((r) => (
-          <Link
-            key={r}
-            href={`/targets?role=${r}&period=${period}`}
-            className={cn(
-              "flex h-8 shrink-0 items-center rounded-lg px-4 text-sm transition-colors",
-              role === r ? "bg-card font-medium shadow-xs ring-1 ring-border" : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {ROLE_LABEL[r]}
-          </Link>
-        ))}
-      </div>
-      <TargetsForm
-        key={`${role}-${period}`}
-        role={role}
-        period={period}
-        metrics={roleMetrics.map((m) => ({
-          id: m.id,
-          key: m.key,
-          targetMode: m.targetMode,
-          name: m.role === "supervisor" ? `${m.name} · Supervisor` : m.name,
-          unit: m.unit,
-          aggregation: m.aggregation,
-          higherIsBetter: m.higherIsBetter,
-          weight: m.weight,
-          defaultTarget: m.defaultTarget,
-        }))}
-        members={roleMembers.map((m) => ({
-          id: m.id,
-          name: m.role === "supervisor" ? `${m.name} · Supervisor` : m.name,
-          title: m.title,
-          share: roleSlots(m).find((slot) => slot.role === role)?.share ?? 100,
-          targets: Object.fromEntries(targets.get(m.id) ?? []),
-        }))}
-      />
-    </>
-  );
+  const { period } = resolveMemberTargetPeriod(sp.period);
+  const [metrics, members] = await Promise.all([getMetrics(), getMembers(true, true)]);
+  const member = sp.user ? members.find((item) => item.id === Number(sp.user)) : members[0];
+  if (sp.user && !member) notFound();
+  const targets = member ? await getTargetMap(period, [member.id]) : new Map<number, Map<number, number>>();
+  return <>
+    <PageHeader title="Target KPI per Anggota" description="Tentukan target setiap orang untuk setiap bulan. Perubahan hanya berlaku untuk anggota dan bulan yang dipilih." actions={<Link href={`/team?period=${period}`} className="text-sm underline underline-offset-4">Kelola anggota</Link>} />
+    <form className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border bg-card p-4" action="/targets">
+      <label className="grid min-w-0 flex-1 gap-1.5 text-sm font-medium">Anggota<select name="user" defaultValue={member?.id} className="h-10 w-full min-w-48 rounded-md border bg-background px-3" aria-label="Pilih anggota">{members.map((item) => <option key={item.id} value={item.id}>{item.name} · {roleLabel(item.role, item.advertiserLevel)}{!item.isActive ? " (nonaktif)" : ""}</option>)}</select></label>
+      <label className="grid gap-1.5 text-sm font-medium">Bulan target<input type="month" name="period" defaultValue={period} required className="h-10 rounded-md border bg-background px-3" /></label>
+      <button className="h-10 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground">Tampilkan target</button>
+    </form>
+    {member ? <Panel title={`${member.name} · ${period}`} bodyClassName="p-4"><MemberTargetsForm key={`${member.id}-${period}`} member={member} metrics={metrics} targets={Object.fromEntries(targets.get(member.id) ?? [])} period={period} /></Panel> : <p className="text-sm text-muted-foreground">Tambahkan anggota di Team untuk mengatur targetnya.</p>}
+  </>;
 }

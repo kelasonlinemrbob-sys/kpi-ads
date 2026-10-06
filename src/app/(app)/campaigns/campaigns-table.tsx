@@ -112,7 +112,7 @@ export function CampaignsTable({
                     </TableCell>
                     <TableCell>
                       <span className="flex items-center gap-2">
-                        <UserAvatar name={c.ownerName} className="size-7" />
+                        <UserAvatar name={c.ownerName} avatarId={c.ownerAvatarId} className="size-7" />
                         {c.ownerName}
                       </span>
                     </TableCell>

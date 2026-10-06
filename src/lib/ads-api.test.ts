@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import { after, test, mock } from "node:test";
 import { fetchAccountCampaigns, fetchAccountCampaignList } from "./ads-api";
+import { encryptSecret } from "./secret-box";
 import { db } from "@/db";
-mock.method(db.$client, "query", async () => ({ rows: [] }));
+process.env.AUTH_SECRET = "fixture-encryption-key";
+mock.method(db.$client, "query", async () => ({ rows: [
+  ["user.1.google.connection", encryptSecret(JSON.stringify({ credentials: { clientId: "test-only", clientSecret: "test-only", refreshToken: "test-only", loginCustomerId: "" } })), 1, new Date().toISOString()],
+  ["user.1.meta.access_token", encryptSecret("meta-test-secret"), 1, new Date().toISOString()],
+] }));
+
 
 // Synthetic Google API credentials, used only with mocked fetch. No network calls.
 for (const key of ['GOOGLE_ADS_CLIENT_ID','GOOGLE_ADS_CLIENT_SECRET','GOOGLE_ADS_REFRESH_TOKEN']) process.env[key] = 'test-only';
@@ -30,7 +36,7 @@ for (const mode of ['available','zero','failed','inactive','base-failed'] as con
   test(`Google LPV: ${mode}`, async () => {
     const mock = mockGoogle(mode);
     try {
-      const result = await fetchAccountCampaigns({ platform: 'google', accountId: '1234567890', lpvConversionAction: action }, '2026-10-02');
+      const result = await fetchAccountCampaigns({ createdById: 1, platform: 'google', accountId: '1234567890', lpvConversionAction: action }, '2026-10-02');
       if (mode === 'base-failed') { assert.equal(result.ok, false); return; }
       assert.equal(result.ok, true); if (!result.ok) return;
       assert.equal(result.campaigns[0]!.spent, 240000);
@@ -44,7 +50,7 @@ for (const mode of ['available','zero','failed','inactive','base-failed'] as con
 test('Google without LPV mapping retains ads metrics and gives a setup warning', async () => {
   const mock = mockGoogle('available');
   try {
-    const result = await fetchAccountCampaigns({ platform: 'google', accountId: '1234567890' }, '2026-10-02');
+    const result = await fetchAccountCampaigns({ createdById: 1, platform: 'google', accountId: '1234567890' }, '2026-10-02');
     assert.ok(result.ok); if (!result.ok) return;
     assert.equal(result.campaigns[0]!.landingPageViews, null);
     assert.equal(result.lpvAvailable, false); assert.ok(result.warnings!.length);
@@ -52,7 +58,7 @@ test('Google without LPV mapping retains ads metrics and gives a setup warning',
   } finally { mock.restore(); }
 });
 
-test('Google campaign sync uses shared credentials and retries legacy date fields', async () => {
+test('Google campaign sync uses owner credentials and retries legacy date fields', async () => {
   const original = global.fetch; const queries: string[] = [];
   global.fetch = async (url, init) => {
     if (String(url).includes('oauth2')) return Response.json({ access_token: 'test-only', expires_in: 3600 });
@@ -62,7 +68,7 @@ test('Google campaign sync uses shared credentials and retries legacy date field
     return Response.json([{ results: [{ campaign: { id: '11', name: 'Test campaign', status: 'ENABLED', startDate: '2026-10-01', endDate: '2037-12-30' }, campaignBudget: { amountMicros: '10000000000' } }] }]);
   };
   try {
-    const result = await fetchAccountCampaignList({ platform: 'google', accountId: '1234567890' });
+    const result = await fetchAccountCampaignList({ createdById: 1, platform: 'google', accountId: '1234567890' });
     assert.ok(result.ok); if (!result.ok) return;
     assert.equal(queries.length, 2); assert.equal(result.campaigns[0].dailyBudget, 10000);
     assert.equal(result.campaigns[0].startDate, '2026-10-01'); assert.equal(result.campaigns[0].endDate, null);

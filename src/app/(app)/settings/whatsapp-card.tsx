@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
+import { Badge } from "@/components/ui/badge";
 import {
   CheckCircle2Icon,
   LoaderIcon,
@@ -46,10 +48,17 @@ function WaText({ text }: { text: string }) {
 
 /** Link the advertiser's own WhatsApp (Baileys, via QR) and choose the report group. */
 export function WhatsAppCard({ initial }: { initial: WhatsAppStatus }) {
+  const router = useRouter();
+  const connectionRef = React.useRef(`${initial.status}:${initial.workerAlive}`);
   const [status, setStatus] = React.useState(initial);
   const [pending, startTransition] = React.useTransition();
 
-  const refresh = React.useCallback(async () => setStatus(await getWhatsAppStatus()), []);
+  const refresh = React.useCallback(async () => {
+    const next = await getWhatsAppStatus();
+    setStatus(next);
+    const connection = `${next.status}:${next.workerAlive}`;
+    if (connection !== connectionRef.current) { connectionRef.current = connection; router.refresh(); }
+  }, [router]);
   // Poll fast while linking (the QR rotates every ~20s), slowly otherwise.
   const linking = status.wantConnected && status.status !== "connected";
   React.useEffect(() => {
@@ -68,7 +77,7 @@ export function WhatsAppCard({ initial }: { initial: WhatsAppStatus }) {
   const connected = status.status === "connected";
 
   return (
-    <Panel title="WhatsApp laporan iklan" icon={MessageCircleIcon} iconPosition="left" bodyClassName="grid gap-4 p-4">
+    <Panel title="WhatsApp laporan iklan" icon={MessageCircleIcon} iconPosition="left" className="border-0 bg-none p-0" action={<Badge variant={!status.workerAlive ? "warning" : connected ? "success" : "outline"}>{!status.workerAlive ? "Layanan offline" : connected ? "Terhubung" : linking ? "Menghubungkan" : "Belum terhubung"}</Badge>} bodyClassName="grid min-w-0 gap-5 p-4 sm:p-5">
       <p className="text-sm text-muted-foreground">
         Hubungkan WhatsApp-mu sendiri. Setiap kali laporan harian dikirim atau diperbarui, ringkasannya otomatis
         terkirim dari nomormu ke grup yang dipilih.
@@ -78,8 +87,7 @@ export function WhatsAppCard({ initial }: { initial: WhatsAppStatus }) {
         <p className="flex gap-2 rounded-lg border border-warning/30 bg-warning/5 p-3 text-sm">
           <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-warning" />
           <span>
-            Layanan WhatsApp belum berjalan, jadi QR belum bisa tampil dan pesan belum terkirim. Minta admin menjalankan{" "}
-            <code className="rounded bg-muted px-1">pnpm wa:worker</code>.
+            Layanan WhatsApp belum berjalan, jadi QR belum bisa tampil dan pesan belum terkirim. Hubungi admin untuk mengaktifkan kembali layanan.
           </span>
         </p>
       )}
@@ -127,8 +135,8 @@ export function WhatsAppCard({ initial }: { initial: WhatsAppStatus }) {
         </div>
       ) : (
         <div className="grid gap-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
-            <p className="flex items-center gap-2 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-success/20 bg-success/5 p-4">
+            <p className="flex flex-wrap items-center gap-2 text-sm">
               <CheckCircle2Icon className="size-4 text-success" />
               Terhubung sebagai <span className="font-medium">+{status.phone}</span>
             </p>
@@ -147,32 +155,34 @@ export function WhatsAppCard({ initial }: { initial: WhatsAppStatus }) {
             </Button>
           </div>
 
-          <div className="grid gap-1.5">
-            <Label>Grup tujuan</Label>
-            <div className="flex gap-2">
-              <Select value={status.groupJid ?? undefined} onValueChange={(jid) => run(() => setWhatsAppGroup(jid), "Grup tujuan disimpan")}>
-                <SelectTrigger className="w-full sm:max-w-sm">
-                  <SelectValue placeholder={status.groups.length ? "Pilih grup laporan iklan" : "Belum ada grup"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {status.groups.map((group) => (
-                    <SelectItem key={group.id} value={group.id}>
-                      {group.subject}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button variant="outline" size="icon" onClick={() => run(refreshWhatsAppGroups)} disabled={pending} aria-label="Muat ulang daftar grup">
-                <RefreshCwIcon />
-              </Button>
+          <div className="grid gap-4 xl:grid-cols-2">
+            <div className="grid content-start gap-2 rounded-lg border p-4">
+              <Label htmlFor="wa-report-group">Grup tujuan</Label>
+              <div className="flex gap-2">
+                <Select disabled={pending} value={status.groupJid ?? undefined} onValueChange={(jid) => run(() => setWhatsAppGroup(jid), "Grup tujuan disimpan")}>
+                  <SelectTrigger id="wa-report-group" className="min-w-0 flex-1 [&>span]:truncate">
+                    <SelectValue placeholder={status.groups.length ? "Pilih grup laporan iklan" : "Belum ada grup"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {status.groups.map((group) => (
+                      <SelectItem key={group.id} value={group.id}>
+                        {group.subject}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" size="icon" onClick={() => run(refreshWhatsAppGroups)} disabled={pending} aria-label="Muat ulang daftar grup">
+                  <RefreshCwIcon />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">Nomormu harus menjadi anggota grup tersebut.</p>
             </div>
-            <p className="text-xs text-muted-foreground">Nomormu harus menjadi anggota grup tersebut.</p>
-          </div>
 
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox checked={status.autoSend} onCheckedChange={(checked) => run(() => setWhatsAppAutoSend(checked === true))} />
-            Kirim otomatis setiap laporan dikirim atau diperbarui
-          </label>
+            <label className="flex cursor-pointer items-start gap-3 rounded-lg border bg-muted/20 p-4 text-sm">
+              <Checkbox className="mt-0.5" disabled={pending} checked={status.autoSend} onCheckedChange={(checked) => run(() => setWhatsAppAutoSend(checked === true))} />
+              <span><span className="block font-medium">Pengiriman otomatis</span><span className="mt-1 block text-xs leading-relaxed text-muted-foreground">Kirim ringkasan saat laporan dikirim atau diperbarui.</span>{!status.groupJid && <span className="mt-2 block text-xs text-warning">Pilih grup tujuan agar laporan dapat dikirim.</span>}</span>
+            </label>
+          </div>
 
           <div className="flex flex-wrap items-center gap-3">
             <Button variant="outline" size="sm" onClick={() => run(sendWhatsAppTest, "Pesan tes masuk antrean")} disabled={pending || !status.groupJid}>
@@ -188,20 +198,18 @@ export function WhatsAppCard({ initial }: { initial: WhatsAppStatus }) {
           </div>
 
           {status.preview && (
-            <div className="grid gap-1.5">
-              <Label>Contoh pesan di grup (laporan terakhir)</Label>
-              <div className="max-w-sm rounded-lg rounded-tl-none bg-[#d9fdd3] px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap text-[#111b21] shadow-sm dark:bg-[#005c4b] dark:text-[#e9edef]">
+            <details className="rounded-lg border p-4">
+              <summary className="cursor-pointer text-sm font-medium">Pratinjau laporan terakhir</summary>
+              <div className="mt-3 max-w-sm break-words rounded-lg rounded-tl-none bg-[#d9fdd3] px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap text-[#111b21] shadow-sm dark:bg-[#005c4b] dark:text-[#e9edef]">
                 <WaText text={status.preview} />
               </div>
-            </div>
+            </details>
           )}
 
           <div className="flex gap-2 rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
             <ShieldCheckIcon className="mt-0.5 size-4 shrink-0 text-success" />
             <p>
-              Pengaman anti-banned aktif: pesan dikirim seperti orang mengetik (status &ldquo;mengetik…&rdquo;), diberi jeda acak antar
-              pesan, dibatasi per jam &amp; per hari, dan edit laporan beruntun digabung jadi satu pesan. Gunakan hanya untuk grup
-              internal, jangan kirim ke kontak yang tidak menyimpan nomormu.
+              Pengiriman memakai antrean dan jeda antar pesan. Pembaruan laporan yang berdekatan digabung agar grup tidak menerima pesan berulang.
             </p>
           </div>
         </div>

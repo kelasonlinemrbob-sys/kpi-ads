@@ -68,7 +68,7 @@ export default async function LeaderboardPage({ searchParams }: { searchParams: 
               return (
                 <Panel key={c.member.id} title={`#${i + 1}`} icon={Icon} className={cn(i === 0 && "md:order-2", i === 1 && "md:order-1", i === 2 && "md:order-3")}>
                   <div className="flex flex-col items-center px-4 pt-4 pb-4 text-center">
-                    <UserAvatar name={c.member.name} className={cn(i === 0 ? "size-16 text-base" : "size-12")} />
+                    <UserAvatar name={c.member.name} avatarId={c.member.avatarId} className={cn(i === 0 ? "size-16 text-base" : "size-12")} />
                     <p className="mt-3 font-medium">
                       {c.member.name}
                       {c.member.id === user.id && <span className="ml-1 text-xs font-normal text-muted-foreground">(you)</span>}
@@ -106,7 +106,7 @@ export default async function LeaderboardPage({ searchParams }: { searchParams: 
                       <TableCell className="font-medium tabular-nums">#{i + 1}</TableCell>
                       <TableCell>
                         <span className="flex items-center gap-2.5">
-                          <UserAvatar name={c.member.name} className="size-8" />
+                          <UserAvatar name={c.member.name} avatarId={c.member.avatarId} className="size-8" />
                           <span className="font-medium">
                             {user.role === "supervisor" ? <Link href={`/scorecard?user=${c.member.id}&period=${period}`}>{c.member.name}</Link> : c.member.name}
                             {me && <span className="ml-1 text-xs font-normal text-muted-foreground">(you)</span>}

@@ -8,7 +8,7 @@ import { db } from "@/db";
 import { users } from "@/db/schema";
 import { createSession, destroySession } from "@/lib/auth";
 
-export type FormState = { error?: string; ok?: boolean; message?: string } | undefined;
+export type FormState = { error?: string; ok?: boolean; message?: string; warning?: string } | undefined;
 
 const loginSchema = z.object({
   email: z.email("Enter a valid email").transform((s) => s.toLowerCase().trim()),
@@ -22,6 +22,7 @@ export async function login(_: FormState, formData: FormData): Promise<FormState
   const [user] = await db.select().from(users).where(eq(users.email, parsed.data.email)).limit(1);
   const valid = user && (await bcrypt.compare(parsed.data.password, user.passwordHash));
   if (!user || !valid) return { error: "Incorrect email or password" };
+  if (user.invitationPending) return { error: "Aktifkan akun melalui tautan undangan email terlebih dahulu." };
   if (!user.isActive) return { error: "Your account has been deactivated. Contact your supervisor." };
 
   await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));

@@ -44,6 +44,7 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
       .select({
         task: tasks,
         assigneeName: users.name,
+        assigneeAvatarId: users.avatarId,
         creatorName: creator.name,
         campaignName: campaigns.name,
       })
@@ -70,6 +71,7 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
     dueDate: r.task.dueDate,
     assigneeId: r.task.assigneeId,
     assigneeName: r.assigneeName,
+    assigneeAvatarId: r.assigneeAvatarId,
     createdById: r.task.createdById,
     creatorName: r.creatorName,
     campaignId: r.task.campaignId,

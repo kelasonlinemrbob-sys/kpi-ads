@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
-export type CampaignRow = Omit<Campaign, "createdAt" | "updatedAt"> & { ownerName: string };
+export type CampaignRow = Omit<Campaign, "createdAt" | "updatedAt"> & { ownerName: string; ownerAvatarId?: number | null };
 
 export type AdAccountOption = { lpvConversionAction?: string | null; id: number; platform: Campaign["platform"]; name: string; accountId: string };
 

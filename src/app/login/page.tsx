@@ -7,8 +7,10 @@ import { LoginForm } from "./login-form";
 
 export const metadata: Metadata = { title: "Sign in" };
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ reset?: string }> }) {
-  const resetDone = (await searchParams).reset === "success";
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ reset?: string; invitation?: string }> }) {
+  const params = await searchParams;
+  const resetDone = params.reset === "success";
+  const invitationDone = params.invitation === "accepted";
   if (await getCurrentUser()) redirect("/dashboard");
   return (
     <main className="relative flex min-h-dvh items-center justify-center bg-sidebar px-4 py-10">
@@ -24,6 +26,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           </div>
           <div className="rounded-xl border bg-card p-4 shadow-xs">
             {resetDone && <p role="status" className="mb-3 rounded-lg border bg-muted/50 px-3 py-2 text-sm">Password berhasil diganti. Silakan login dengan password baru.</p>}
+            {invitationDone && <p role="status" className="mb-3 rounded-lg border bg-muted/50 px-3 py-2 text-sm">Akun berhasil diaktifkan. Silakan login dengan email undangan dan password yang baru Anda buat.</p>}
             <LoginForm />
           </div>
         </div>

@@ -1,6 +1,6 @@
 import type { AdvertiserLevel, Role } from "@/db/schema";
 
-export const ROLES: Role[] = ["supervisor", "advertiser", "webmaster", "seo", "creative"];
+export const ROLES: Role[] = ["supervisor", "advertiser", "webmaster", "seo", "creative", "cso"];
 
 export const ROLE_LABEL: Record<Role, string> = {
   supervisor: "Supervisor",
@@ -8,6 +8,7 @@ export const ROLE_LABEL: Record<Role, string> = {
   webmaster: "Web Master",
   seo: "SEO Specialist",
   creative: "Creative",
+  cso: "CSO",
 };
 
 export const ADVERTISER_LEVEL_LABEL: Record<AdvertiserLevel, string> = { junior: "Junior", senior: "Senior" };
@@ -36,6 +37,7 @@ export const ROLE_BADGE: Record<Role, string> = {
   advertiser: "bg-info/10 text-info border-info/20",
   webmaster: "bg-[oklch(0.6_0.17_300)]/10 text-[oklch(0.5_0.17_300)] border-[oklch(0.6_0.17_300)]/20 dark:text-[oklch(0.75_0.13_300)]",
   seo: "bg-success/10 text-success border-success/20",
+  cso: "bg-info/10 text-info border-info/20",
   creative: "bg-warning/10 text-[color-mix(in_oklch,var(--warning),black_25%)] border-warning/25 dark:text-warning",
 };
 
@@ -43,7 +45,7 @@ export const can = {
   manageTeam: (r: Role) => r === "supervisor",
   manageTargets: (r: Role) => r === "supervisor",
   reviewReports: (r: Role) => r === "supervisor",
-  submitReports: (r: Role) => ROLES.includes(r),
+  submitReports: (r: Role) => r !== "cso" && ROLES.includes(r),
   runAds: (r: Role) => r === "supervisor" || r === "advertiser",
   viewCampaigns: (r: Role) => r === "supervisor" || r === "advertiser" || r === "webmaster",
   editCampaigns: (r: Role) => r === "supervisor" || r === "advertiser",

@@ -3,8 +3,7 @@ import "server-only";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { advertiserReportItems, dailyReports, users, waOutbox, waSessions, waWorker } from "@/db/schema";
-import { formatRp } from "@/lib/ad-metrics";
-import { advertiserReportWindows } from "@/lib/reporting";
+import { formatReportMessage } from "@/lib/report-message";
 
 /** The worker writes a heartbeat every 2s; older than this means it is not running. */
 const WORKER_STALE_MS = 15_000;
@@ -14,54 +13,20 @@ export async function isWorkerAlive() {
   return !!row && Date.now() - row.heartbeatAt.getTime() < WORKER_STALE_MS;
 }
 
-/** Platform names as advertisers say them in the group ("Facebook", not "Meta Ads"). */
-const WA_PLATFORM: Record<(typeof advertiserReportItems.$inferSelect)["platform"], string> = {
-  meta: "Facebook",
-  google: "Google",
-  tiktok: "TikTok",
-  shopee: "Shopee",
-  other: "",
-};
-const PLATFORM_ORDER = Object.keys(WA_PLATFORM);
-
-/**
- * WhatsApp text for one advertiser daily report, one block per period (day):
- *
- *   Advertiser *wahib*
- *   Spent Iklan *2026-09-25*
- *   => Facebook Kelas Online = Rp 653.851
- *   => Google Kelas Online = Rp 988.978
- *
- * Periods without numbers are left out.
- */
-export async function buildReportMessage(reportId: number, updated: boolean) {
-  const [report] = await db
+export async function buildReportMessage(reportId: number, updated: boolean, channel: "whatsapp" | "telegram" = "whatsapp", database: Pick<typeof db, "select"> = db) {
+  const [report] = await database
     .select({ date: dailyReports.date, name: users.name })
     .from(dailyReports)
     .innerJoin(users, eq(users.id, dailyReports.userId))
     .where(eq(dailyReports.id, reportId));
   if (!report) return null;
-  const items = await db
+  const items = await database
     .select()
     .from(advertiserReportItems)
     .where(eq(advertiserReportItems.reportId, reportId))
     .orderBy(asc(advertiserReportItems.product));
 
-  const blocks: string[] = [];
-  for (const period of advertiserReportWindows(report.date)) {
-    const rows = items
-      .filter((item) => item.performanceDate === period.performanceDate)
-      .sort((a, b) => PLATFORM_ORDER.indexOf(a.platform) - PLATFORM_ORDER.indexOf(b.platform));
-    if (!rows.length) continue;
-    blocks.push(
-      [
-        `Advertiser *${report.name}*${updated && !blocks.length ? " _(revisi)_" : ""}`,
-        `Spent Iklan *${period.performanceDate}*`,
-        ...rows.map((row) => `=> ${[WA_PLATFORM[row.platform], row.product].filter(Boolean).join(" ")} = ${formatRp(row.spent)}`),
-      ].join("\n"),
-    );
-  }
-  return blocks.length ? blocks.join("\n\n") : null;
+  return formatReportMessage(report, items, updated, channel);
 }
 
 /**

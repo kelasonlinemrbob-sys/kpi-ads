@@ -10,15 +10,19 @@ type ItemWithCampaigns = AdvertiserReportItem & { campaigns: AdvertiserReportIte
 
 export function AdvertiserReportDetail({
   reportDate,
+  historical = false,
   cutoff,
   items,
 }: {
   reportDate: string;
+  historical?: boolean;
   /** Report deadline "HH:MM" from the reporting rules. */
   cutoff?: string;
   items: ItemWithCampaigns[];
 }) {
-  const windows = advertiserReportWindows(reportDate, cutoff);
+  const windows = historical
+    ? [...new Set(items.map((item) => item.performanceDate))].sort().map((performanceDate) => ({ performanceDate, title: "Laporan historis", timeRange: "Angka sesuai CSV sumber" }))
+    : advertiserReportWindows(reportDate, cutoff);
 
   return (
     <div className="grid gap-3">

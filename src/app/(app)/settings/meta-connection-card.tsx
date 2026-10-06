@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useActionState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDownIcon, LoaderIcon, PlugIcon, PlugZapIcon, PlusIcon, TriangleAlertIcon, UnplugIcon } from "lucide-react";
+import { ChevronDownIcon, LoaderIcon, PlugIcon, PlugZapIcon, PlusIcon, Settings2Icon, TriangleAlertIcon, UnplugIcon } from "lucide-react";
 import { toast } from "sonner";
 import { saveAdAccount } from "@/actions/ad-accounts";
 import { removeMetaConnectionAction, saveMetaConnectionAction, testMetaConnectionAction } from "@/actions/meta-connection";
@@ -27,7 +27,7 @@ export function MetaConnectionCard({
   registeredAccountIds,
 }: {
   status: MetaConnectionStatus;
-  /** Supervisor: may enter, replace or remove the token. */
+  /** Advertiser/supervisor may manage their own token. */
   canManage: boolean;
   canAddAccounts: boolean;
   /** Meta ad account IDs (digits) already registered in the app. */
@@ -39,7 +39,7 @@ export function MetaConnectionCard({
   const [testing, startTest] = React.useTransition();
   const [accounts, setAccounts] = React.useState<MetaAdAccount[] | null>(null);
   const [added, setAdded] = React.useState<string[]>([]);
-  const [guideOpen, setGuideOpen] = React.useState(status.state !== "ok");
+  const [guideOpen, setGuideOpen] = React.useState(false);
 
   const test = React.useCallback(
     (silent = false) =>
@@ -96,9 +96,9 @@ export function MetaConnectionCard({
   const warn = status.state !== "ok";
 
   return (
-    <Panel title="Koneksi Meta Ads" icon={PlugIcon} iconPosition="left" action={<MetaStatusBadge status={status} />} bodyClassName="grid gap-4 p-4">
+    <Panel title="Koneksi Meta Ads" icon={PlugIcon} iconPosition="left" action={<MetaStatusBadge status={status} />} className="border-0 bg-none p-0" bodyClassName="grid min-w-0 gap-5 p-4 sm:p-5">
       <p className="text-sm text-muted-foreground">
-        Token Meta Marketing API dipakai untuk semua akun Meta di <span className="text-foreground">Campaigns → Akun iklan</span>{" "}
+        Token Meta Marketing API milik Anda dipakai untuk akun Meta yang Anda daftarkan di <span className="text-foreground">Campaigns → Akun iklan</span>{" "}
         saat advertiser klik <span className="text-foreground">Generate dari Ads</span> dan <span className="text-foreground">Sinkron dari Ads</span>.
       </p>
 
@@ -121,8 +121,11 @@ export function MetaConnectionCard({
         </div>
       </div>
 
+      {canManage && connected && <div className="flex flex-wrap items-center gap-3"><Button type="button" variant="outline" onClick={() => test()} disabled={saving || testing}>{testing ? <LoaderIcon className="animate-spin" /> : <PlugZapIcon />}Tes koneksi &amp; lihat akun</Button><span className="text-xs text-muted-foreground">Periksa akses akun iklan dari token tersimpan.</span></div>}
       {canManage ? (
-        <form ref={formRef} action={action} className="grid gap-3">
+        <details open={warn || Boolean(state?.error)} className="group/credentials min-w-0 rounded-lg border">
+          <summary className="flex cursor-pointer list-none items-center gap-3 p-4 [&::-webkit-details-marker]:hidden"><Settings2Icon className="size-4 shrink-0 text-muted-foreground" /><span className="min-w-0 flex-1"><span className="block text-sm font-medium">{connected ? "Ubah konfigurasi" : "Siapkan koneksi Meta Ads"}</span><span className="mt-0.5 block text-xs text-muted-foreground">Access token dan konfigurasi aplikasi Meta.</span></span><ChevronDownIcon className="size-4 shrink-0 transition-transform group-open/credentials:rotate-180" /></summary>
+        <form ref={formRef} action={action} className="grid min-w-0 gap-4 border-t p-4">
           <div className="grid gap-1.5">
             <Label htmlFor="meta-token">Access token</Label>
             <Input
@@ -156,7 +159,7 @@ export function MetaConnectionCard({
               </div>
             </CollapsibleContent>
           </Collapsible>
-          {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
+          {state?.error && <p role="alert" className="text-sm text-destructive">{state.error}</p>}
           <div className="flex flex-wrap gap-2">
             <Button type="submit" disabled={saving || testing}>
               {saving && <LoaderIcon className="animate-spin" />} Simpan &amp; tes
@@ -173,6 +176,7 @@ export function MetaConnectionCard({
             )}
           </div>
         </form>
+        </details>
       ) : (
         <div className="flex flex-wrap items-center gap-3">
           {connected && (
@@ -180,7 +184,7 @@ export function MetaConnectionCard({
               {testing && <LoaderIcon className="animate-spin" />} Tes koneksi
             </Button>
           )}
-          <span className="text-xs text-muted-foreground">Token hanya bisa diisi atau diganti oleh supervisor.</span>
+          <span className="text-xs text-muted-foreground">Anda dapat mengatur token milik Anda sendiri.</span>
         </div>
       )}
 
@@ -220,10 +224,10 @@ export function MetaConnectionCard({
         </div>
       )}
 
-      <Collapsible open={guideOpen} onOpenChange={setGuideOpen} className="rounded-lg border">
+      <Collapsible open={guideOpen} onOpenChange={setGuideOpen} className="rounded-lg border bg-muted/20">
         <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium">
           <ChevronDownIcon className="size-4 text-muted-foreground transition-transform group-data-[state=closed]:-rotate-90" />
-          Cara connect Meta Ads &amp; agar token awet
+          Panduan menghubungkan Meta Ads
         </CollapsibleTrigger>
         <CollapsibleContent className="border-t p-3">
           <MetaConnectGuide />

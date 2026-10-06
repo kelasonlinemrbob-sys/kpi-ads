@@ -9,7 +9,7 @@ export function HashToTab() {
   const params = useSearchParams();
   React.useEffect(() => {
     const hash = window.location.hash;
-    if (!params.get("tab") && (hash === "#whatsapp" || hash === "#meta-ads" || hash === "#google-ads")) router.replace(`/settings?tab=integrasi${hash}`);
+    if ((hash === "#whatsapp" || hash === "#meta-ads" || hash === "#google-ads" || hash === "#telegram" || hash === "#google-sheets") && (params.get("tab") !== "integrasi" || params.get("service") !== hash.slice(1))) router.replace(`/settings?tab=integrasi&service=${hash.slice(1)}${hash}`, { scroll: false });
   }, [params, router]);
   return null;
 }

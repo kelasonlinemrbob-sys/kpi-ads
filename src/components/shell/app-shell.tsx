@@ -33,16 +33,18 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Dialog, SheetContent } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { breadcrumbFor, buildNav, type NavCounts, type NavItem } from "./nav";
+import { breadcrumbFor, buildNav, type NavCounts, type NavItem, type NavSection } from "./nav";
 import { CommandMenu } from "./command-menu";
 
-export type ShellUser = { id: number; name: string; email: string; role: Role; advertiserLevel: AdvertiserLevel | null };
+export type ShellUser = { id: number; name: string; avatarId: number | null; email: string; role: Role; advertiserLevel: AdvertiserLevel | null };
 
 export function AppShell({ user, counts, children }: { user: ShellUser; counts: NavCounts; children: React.ReactNode }) {
   const [collapsed, setCollapsed] = React.useState(false);
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const [searchOpen, setSearchOpen] = React.useState(false);
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const currentQuery=searchParams.toString();
   const senior = user.role === "advertiser" && user.advertiserLevel === "senior";
   const nav = React.useMemo(() => buildNav(user.role, counts, senior), [user.role, counts, senior]);
 
@@ -52,7 +54,7 @@ export function AppShell({ user, counts, children }: { user: ShellUser; counts: 
     } catch {}
   }, []);
 
-  React.useEffect(() => setMobileOpen(false), [pathname]);
+  React.useEffect(() => setMobileOpen(false), [pathname,currentQuery]);
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -104,7 +106,7 @@ export function AppShell({ user, counts, children }: { user: ShellUser; counts: 
 
       <div className="flex min-w-0 flex-1 flex-col bg-background lg:my-1.5 lg:mr-1.5 lg:rounded-xl lg:border print:m-0 print:border-0">
         <MobileHeader onMenu={() => setMobileOpen(true)} counts={counts} role={user.role} />
-        <main className="mx-auto w-full max-w-[1600px] flex-1 px-3 pt-3 pb-6 sm:px-5 lg:pt-5">{children}</main>
+        <main className="mx-auto min-w-0 w-full max-w-[1600px] flex-1 px-3 pt-3 pb-6 sm:px-5 lg:pt-5">{children}</main>
       </div>
 
       <CommandMenu open={searchOpen} onOpenChange={setSearchOpen} nav={nav} />
@@ -128,7 +130,7 @@ function SidebarContent({
   return (
     <div className="flex h-full min-h-0 flex-col px-2.5 pt-3 pb-2.5">
       <div className={cn("flex items-center px-1.5", collapsed ? "flex-col gap-3" : "justify-between")}>
-        <Link href="/dashboard" aria-label="KPI Ads home">
+        <Link href={user.role==="cso"?"/leads":"/dashboard"} aria-label="KPI Ads home">
           <Logo collapsed={collapsed} />
         </Link>
         <button
@@ -154,31 +156,31 @@ function SidebarContent({
         <SearchIcon className="size-4 shrink-0" />
         {!collapsed && (
           <>
-            <span className="flex-1 text-left">Search anything</span>
+            <span className="flex-1 text-left">Cari menu…</span>
             <kbd className="text-xs tracking-widest text-foreground/70">⌘K</kbd>
           </>
         )}
       </button>
 
       <nav className="-mx-1 mt-2 min-h-0 flex-1 overflow-y-auto px-1">
-        {nav.map((section) => (
-          <div key={section.label} className="mt-3 first:mt-1">
-            {!collapsed && (
-              <p className="mb-1 px-2 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">{section.label}</p>
-            )}
-            {collapsed && <div className="dashed-divider mx-2 mb-2" />}
-            <ul className="grid gap-0.5">
-              {section.items.map((item) => (
-                <NavLink key={item.title} item={item} collapsed={collapsed} />
-              ))}
-            </ul>
-          </div>
-        ))}
+        {nav.map(section=><SidebarSection key={section.label} section={section} collapsed={collapsed} userId={user.id} />)}
       </nav>
 
       <UserMenu user={user} collapsed={collapsed} />
     </div>
   );
+}
+
+function SidebarSection({section,collapsed,userId}:{section:NavSection;collapsed:boolean;userId:number}){
+ const isActive=useIsActive();const active=section.items.some(item=>isActive(item.href)||item.children?.some(child=>isActive(child.href)));
+ const pathname=usePathname();const search=useSearchParams();const route=pathname+"?"+search.toString();
+ const [open,setOpen]=React.useState(active||section.label==="Utama");
+ const key=`sidebar-section:${userId}:${section.label}`;
+ React.useEffect(()=>{try{const value=localStorage.getItem(key);setOpen(active||value==="open"||(value===null&&section.label==="Utama"));}catch{setOpen(active||section.label==="Utama");}},[key,route,active,section.label]);
+ const count=section.items.reduce((sum,item)=>sum+(item.badge??0)+(item.children?.reduce((n,c)=>n+(c.badge??0),0)??0),0);
+ const items=<ul className="grid gap-0.5">{section.items.map(item=><NavLink key={item.title} item={item} collapsed={collapsed} />)}</ul>;
+ if(collapsed)return <div className="mt-3 first:mt-1"><div className="dashed-divider mx-2 mb-2" />{items}</div>;
+ return <Collapsible open={open} onOpenChange={value=>{setOpen(value);try{localStorage.setItem(key,value?"open":"closed");}catch{}}} className="mt-3 first:mt-1"><CollapsibleTrigger className="mb-1 flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[11px] font-semibold tracking-wide text-muted-foreground hover:bg-accent hover:text-foreground"><span className={cn("size-1.5 rounded-full",active?"bg-primary":"bg-muted-foreground/30")} /><span className="flex-1 uppercase">{section.label}</span>{!open&&count>0&&<CountBadge n={count} />}<ChevronDownIcon className={cn("size-3.5 transition-transform",open&&"rotate-180")} /></CollapsibleTrigger><CollapsibleContent>{items}</CollapsibleContent></Collapsible>;
 }
 
 function useIsActive() {
@@ -199,6 +201,8 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
   const isActive = useIsActive();
   const active = isActive(item.href) || !!item.children?.some((c) => isActive(c.href));
   const [open, setOpen] = React.useState(active);
+  const pathname=usePathname();const search=useSearchParams();const route=pathname+"?"+search.toString();
+  React.useEffect(()=>{if(active)setOpen(true);},[active,route]);
   const Icon = item.icon;
 
   const base = cn(
@@ -216,6 +220,7 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
           <TooltipTrigger asChild>
             <Link
               href={item.href}
+              aria-current={active?"page":undefined}
               className={cn(base, active && "bg-card text-foreground ring-1 ring-border")}
             >
               <Icon className="size-4" />
@@ -298,7 +303,7 @@ function UserMenu({ user, collapsed }: { user: ShellUser; collapsed: boolean }) 
           collapsed && "justify-center p-1.5",
         )}
       >
-        <UserAvatar name={user.name} online />
+        <UserAvatar name={user.name} avatarId={user.avatarId} online />
         {!collapsed && (
           <>
             <span className="min-w-0 flex-1">

@@ -53,19 +53,19 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
 
   const [productRows, advertisers, allProducts, accountRows, adCampaignRows, metaStatus] = await Promise.all([
     db
-      .select({ campaign: campaigns, ownerName: users.name })
+      .select({ campaign: campaigns, ownerName: users.name, ownerAvatarId: users.avatarId })
       .from(campaigns)
       .innerJoin(users, eq(users.id, campaigns.ownerId))
       .where(where.length ? and(...where) : undefined)
       .orderBy(asc(campaigns.status), desc(campaigns.updatedAt)),
     getMembers(false, true).then((m) => m.filter((x) => can.runAds(x.role))),
     db
-      .select({ campaign: campaigns, ownerName: users.name })
+      .select({ campaign: campaigns, ownerName: users.name, ownerAvatarId: users.avatarId })
       .from(campaigns)
       .innerJoin(users, eq(users.id, campaigns.ownerId)),
-    db.select().from(adAccounts).orderBy(asc(adAccounts.platform), asc(adAccounts.name)),
+    db.select().from(adAccounts).where(user.role === "advertiser" ? eq(adAccounts.createdById, user.id) : undefined).orderBy(asc(adAccounts.platform), asc(adAccounts.name)),
     db.select().from(adCampaigns).orderBy(asc(adCampaigns.status), asc(adCampaigns.name)),
-    getMetaConnectionStatus(),
+    getMetaConnectionStatus(user.id),
   ]);
 
   const accountOptions = accountRows.map(({ id, platform, name, accountId, lpvConversionAction }) => ({ id, platform, name, accountId, lpvConversionAction }));
@@ -86,7 +86,8 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
     .filter(({ campaign: c }) => c.adAccountId && c.matchKeyword?.trim())
     .map(({ campaign: c, ownerName }) => ({ ...c, keyword: c.matchKeyword!, ownerName }));
   const adRows: AdCampaignRow[] = adCampaignRows.flatMap((c) => {
-    const account = accountById.get(c.adAccountId)!;
+    const account = accountById.get(c.adAccountId);
+    if (!account) return [];
     const product = matchProduct(
       c.name,
       linkedProducts.filter((p) => p.adAccountId === c.adAccountId),
@@ -254,7 +255,7 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
             />
           </div>
           <CampaignsTable
-            rows={productRows.map(({ campaign: { createdAt: _c, updatedAt: _u, ...c }, ownerName }) => ({ ...c, ownerName }))}
+            rows={productRows.map(({ campaign: { createdAt: _c, updatedAt: _u, ...c }, ownerName, ownerAvatarId }) => ({ ...c, ownerName, ownerAvatarId }))}
             currentUser={{ id: user.id, role: user.role }}
             advertisers={advertiserOptions}
             adAccounts={accountOptions}

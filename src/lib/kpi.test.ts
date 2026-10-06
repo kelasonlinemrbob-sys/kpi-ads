@@ -62,6 +62,7 @@ test("CPR and CPLV use weighted totals rather than averages of daily costs", () 
   }
   const cpr = { ...cplv, key: "cpl", denominatorKey: "leads" };
   assert.equal(aggregate(cpr, entries, new Map([["ad_spend", spend], ["leads", lpv]])), 20);
+  assert.equal(aggregate(cpr, [entry(3, 5)], new Map([["ad_spend", spend], ["leads", lpv]])), null, "No spend data must not imply free leads");
 });
 
 const task = (patch: Partial<Parameters<typeof taskCompletionAt>[0][number]> = {}) => ({ assigneeId: 1, status: "todo", dueDate: "2026-02-28", createdAt: new Date("2026-02-01T00:00:00+07:00"), completedAt: null, ...patch });

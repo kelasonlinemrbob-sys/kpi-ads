@@ -1,0 +1,10 @@
+[Unit]
+Description=Sync KPI Ads full-day reports every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+Unit=kpiads-sheets.service
+
+[Install]
+WantedBy=timers.target

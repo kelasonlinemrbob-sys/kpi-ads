@@ -6,6 +6,8 @@ import { decryptSecret, encryptSecret } from "./secret-box";
 import { clearGoogleTokenCache, googleCredentialFingerprint, verifyGoogleCredentials, type GoogleVerifiedAccount } from "./google-client";
 import { googleConnectionInput, mergeGoogleCredentials, type GoogleCredentials } from "./google-credentials";
 
+import { readUserIntegrationSettings, userIntegrationKey } from "./integration-settings";
+
 const KEY = "google.connection";
 type Check = { ok: boolean; at: string; error?: string; account?: GoogleVerifiedAccount };
 type StoredConnection = { credentials: GoogleCredentials; check?: Check } | { disabled: true };
@@ -16,11 +18,13 @@ export type GoogleConnectionStatus = {
 };
 
 /** One encrypted object prevents mixed credentials and partial updates. App configuration takes precedence over env. */
-export async function readGoogleConnection() {
-  const [row] = await db.select({ value: appSettings.value }).from(appSettings).where(eq(appSettings.key, KEY));
+export async function readGoogleConnection(userId: number | null | "shared-sheets") {
+  const settings = userId === "shared-sheets" ? null : await readUserIntegrationSettings([KEY], userId);
+  const [shared] = settings === null ? await db.select({ value: appSettings.value }).from(appSettings).where(eq(appSettings.key, KEY)) : [];
+  const row = settings === null ? shared : settings[KEY] !== undefined ? { value: settings[KEY] } : undefined;
   if (row) {
     const value = decryptSecret(row.value);
-    if (!value) return { source: "app" as const, credentials: null, check: null, disabled: false, error: "Konfigurasi Google tidak dapat dibaca. Supervisor perlu mengisi ulang kredensial." };
+    if (!value) return { source: "app" as const, credentials: null, check: null, disabled: false, error: "Konfigurasi Google tidak dapat dibaca. Isi ulang kredensial." };
     try {
       const stored = JSON.parse(value) as StoredConnection;
       if ("disabled" in stored && stored.disabled) return { source: "app" as const, credentials: null, check: null, disabled: true, error: null };
@@ -28,13 +32,16 @@ export async function readGoogleConnection() {
       return { source: "app" as const, credentials: stored.credentials, check: stored.check ?? null, disabled: false, error: null };
     } catch { return { source: "app" as const, credentials: null, check: null, disabled: false, error: "Konfigurasi Google tidak valid. Isi ulang kredensial." }; }
   }
+  if (userId !== "shared-sheets") return { source: null, credentials: null, check: null, disabled: false, error: null };
   const credentials = { clientId: process.env.GOOGLE_ADS_CLIENT_ID?.trim() ?? "", clientSecret: process.env.GOOGLE_ADS_CLIENT_SECRET?.trim() ?? "", refreshToken: process.env.GOOGLE_ADS_REFRESH_TOKEN?.trim() ?? "", loginCustomerId: process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID?.replace(/[\s-]/g, "") ?? "" };
   const complete = Boolean(credentials.clientId && credentials.clientSecret && credentials.refreshToken);
   return { source: complete ? "env" as const : null, credentials: complete ? credentials : null, check: null, disabled: false, error: null };
 }
-export async function getGoogleCredentials() { return (await readGoogleConnection()).credentials; }
-export async function getGoogleConnectionStatus(): Promise<GoogleConnectionStatus> {
-  const data = await readGoogleConnection();
+export async function getGoogleCredentials(userId: number | null) { return (await readGoogleConnection(userId)).credentials; }
+/** The existing Sheets integration keeps its own shared authorization. */
+export async function getSharedSheetsCredentials() { return (await readGoogleConnection("shared-sheets")).credentials; }
+export async function getGoogleConnectionStatus(userId: number | null): Promise<GoogleConnectionStatus> {
+  const data = await readGoogleConnection(userId);
   const state = data.disabled ? "disabled" : data.error ? "error" : !data.credentials ? "none" : data.check?.ok ? "ok" : data.check ? "error" : "configured";
   return { state, source: data.source, clientId: data.credentials?.clientId ?? "", loginCustomerId: data.credentials?.loginCustomerId ?? "",
     hasClientSecret: Boolean(data.credentials?.clientSecret), hasRefreshToken: Boolean(data.credentials?.refreshToken), checkedAt: data.check?.at ?? null,
@@ -43,14 +50,14 @@ export async function getGoogleConnectionStatus(): Promise<GoogleConnectionStatu
 }
 async function storeGoogleConnection(value: StoredConnection, userId: number) {
   const encrypted = encryptSecret(JSON.stringify(value));
-  await db.insert(appSettings).values({ key: KEY, value: encrypted, updatedById: userId }).onConflictDoUpdate({ target: appSettings.key, set: { value: encrypted, updatedById: userId, updatedAt: new Date() } });
+  await db.insert(appSettings).values({ key: userIntegrationKey(KEY, userId), value: encrypted, updatedById: userId }).onConflictDoUpdate({ target: appSettings.key, set: { value: encrypted, updatedById: userId, updatedAt: new Date() } });
   clearGoogleTokenCache();
 }
 export async function saveGoogleConnection(input: unknown, userId: number) {
   const parsed = googleConnectionInput.safeParse(input);
   if (!parsed.success) return { ok: false as const, error: parsed.error.issues[0]?.message ?? "Form tidak valid." };
   try {
-    const current = await getGoogleCredentials();
+    const current = await getGoogleCredentials(userId);
     const credentials = mergeGoogleCredentials(parsed.data, current);
     const account = await verifyGoogleCredentials(credentials, parsed.data.customerId);
     await storeGoogleConnection({ credentials, check: { ok: true, at: new Date().toISOString(), account } }, userId);
@@ -63,22 +70,25 @@ export async function saveGoogleConnection(input: unknown, userId: number) {
   }
 }
 export async function testGoogleConnection(customerId: string, userId: number) {
-  const data = await readGoogleConnection();
+  const data = await readGoogleConnection(userId);
   if (!data.credentials) return { ok: false as const, error: data.error ?? "Isi dan simpan kredensial Google Ads terlebih dahulu." };
   let check: Check;
   try { check = { ok: true, at: new Date().toISOString(), account: await verifyGoogleCredentials(data.credentials, customerId) }; }
   catch (error) { check = { ok: false, at: new Date().toISOString(), error: (error as Error).message }; }
   // Re-check after network I/O so testing an old token cannot overwrite a newer connection or re-enable a disabled one.
-  const latest = await readGoogleConnection();
+  const latest = await readGoogleConnection(userId);
   if (data.source === "app" && latest.credentials && googleCredentialFingerprint(latest.credentials) === googleCredentialFingerprint(data.credentials)) {
     // Only update if the encrypted row has not changed while this operation was in flight.
-    const [row] = await db.select({ value: appSettings.value }).from(appSettings).where(eq(appSettings.key, KEY));
-    if (row) {
+    const [row] = await db.select({ value: appSettings.value }).from(appSettings).where(eq(appSettings.key, userIntegrationKey(KEY, userId)));
+    if (!row) {
+      // First test of a legacy connection creates a personal snapshot; a concurrent save/disconnect wins.
+      await db.insert(appSettings).values({ key: userIntegrationKey(KEY, userId), value: encryptSecret(JSON.stringify({ credentials: data.credentials, check })), updatedById: userId }).onConflictDoNothing();
+    } else {
       const { and } = await import("drizzle-orm");
       const plain = decryptSecret(row.value);
       const stored = plain ? JSON.parse(plain) as StoredConnection : null;
       if (stored && "credentials" in stored && googleCredentialFingerprint(stored.credentials) === googleCredentialFingerprint(data.credentials))
-        await db.update(appSettings).set({ value: encryptSecret(JSON.stringify({ credentials: data.credentials, check })), updatedById: userId, updatedAt: new Date() }).where(and(eq(appSettings.key, KEY), eq(appSettings.value, row.value)));
+        await db.update(appSettings).set({ value: encryptSecret(JSON.stringify({ credentials: data.credentials, check })), updatedById: userId, updatedAt: new Date() }).where(and(eq(appSettings.key, userIntegrationKey(KEY, userId)), eq(appSettings.value, row.value)));
     }
   }
   return check.ok ? { ok: true as const, account: check.account! } : { ok: false as const, error: check.error! };

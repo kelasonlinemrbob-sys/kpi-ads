@@ -54,6 +54,7 @@ const iso = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 const SUMMARIES: Record<Exclude<Role, "supervisor">, string[]> = {
+  cso: [],
   advertiser: [
     "Scaled winning ad sets +20%, paused 3 creatives with CTR < 0.8%.",
     "Launched new retargeting audience from 30-day engagers.",

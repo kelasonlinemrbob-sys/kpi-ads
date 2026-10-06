@@ -19,6 +19,7 @@ export function hasSecondRole(m: RoleHolder): m is RoleHolder & { secondaryRole:
 /** Operational KPI/report roles, separate from the account role used for authorization.
  * Supervisors run their own ads with the full advertiser targets. */
 export function roleSlots(m: RoleHolder): RoleSlot[] {
+  if (m.role === "cso") return [];
   if (m.role === "supervisor") return [{ role: "advertiser", share: 100 }];
   if (!hasSecondRole(m)) return [{ role: m.role, share: 100 }];
   const second = clampShare(m.secondaryShare ?? DEFAULT_SECONDARY_SHARE);

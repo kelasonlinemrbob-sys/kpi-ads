@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import { after, mock, test } from "node:test";
+import { encryptSecret } from "./secret-box";
 import { db } from "@/db";
 import { fetchMetaAdContents } from "./meta-creatives-api";
 import { creativePeriod, validCreativeRange } from "./creative-period";
-mock.method(db.$client, "query", async () => ({ rows: [] }));
+process.env.AUTH_SECRET = "fixture-encryption-key";
+mock.method(db.$client, "query", async () => ({ rows: [
+  ["user.1.google.connection", encryptSecret(JSON.stringify({ credentials: { clientId: "test-only", clientSecret: "test-only", refreshToken: "test-only", loginCustomerId: "" } })), 1, new Date().toISOString()],
+  ["user.1.meta.access_token", encryptSecret("meta-test-secret"), 1, new Date().toISOString()],
+] }));
+
 process.env.META_ACCESS_TOKEN = "meta-test-secret";
 after(async () => { await db.$client.end(); });
 const stats = (id: string) => ({ ad_id: id, ad_name: `Ad ${id}`, impressions: "100", reach: "80", spend: "5000", inline_link_clicks: "10", actions: [{ action_type: "lead", value: "2" }], video_avg_time_watched_actions: [{ action_type: "video_view", value: "4.5" }] });
@@ -30,7 +36,7 @@ test("range is applied at Meta, pagination kept, only delivered ads' metadata fe
     return Response.json(ad(id));
   };
   try {
-    const result = await fetchMetaAdContents("123", "2026-09-29", "2026-10-05"); assert.ok(result.ok); if (!result.ok) return;
+    const result = await fetchMetaAdContents("123", "2026-09-29", "2026-10-05", 1); assert.ok(result.ok); if (!result.ok) return;
     assert.equal(result.ads.length, 2); assert.equal(result.ads[0].reach, 80); assert.equal(result.ads[0].avgPlayTime, 4.5);
     assert.equal(result.ads[0].createdAt?.slice(0, 4), "2020"); assert.equal(result.ads[0].permalink, "https://www.facebook.com/11/posts/22/");
     assert.ok(urls.every((u) => !u.pathname.endsWith("/ads")));
@@ -49,22 +55,22 @@ test("reduce-data response shrinks pages; metadata uses small individual request
     return Response.json(ad(id));
   };
   try {
-    const result = await fetchMetaAdContents("123", "2026-09-06", "2026-10-05"); assert.ok(result.ok);
+    const result = await fetchMetaAdContents("123", "2026-09-06", "2026-10-05", 1); assert.ok(result.ok);
     assert.deepEqual(limits, [50, 10]); assert.deepEqual(ids.sort(), ["1", "2"]);
   } finally { global.fetch = original; }
 });
 test("empty range does not fetch an all-time ad inventory", async () => {
   const original = global.fetch; let calls = 0;
   global.fetch = async () => { calls++; return Response.json({ data: [] }); };
-  try { const result = await fetchMetaAdContents("123", "2026-09-29", "2026-10-05"); assert.deepEqual(result, { ok: true, ads: [] }); assert.equal(calls, 1); }
+  try { const result = await fetchMetaAdContents("123", "2026-09-29", "2026-10-05", 1); assert.deepEqual(result, { ok: true, ads: [] }); assert.equal(calls, 1); }
   finally { global.fetch = original; }
 });
 test("late-page failures return no partial ads, retries terminate, network errors hide tokens", async () => {
   const original = global.fetch; let calls = 0;
   global.fetch = async () => { calls++; return Response.json({ error: { message: "Please reduce the amount of data", code: 1 } }, { status: 400 }); };
   try {
-    let result = await fetchMetaAdContents("123", "2026-09-29", "2026-10-05"); assert.equal(result.ok, false); assert.equal(calls, 3);
+    let result = await fetchMetaAdContents("123", "2026-09-29", "2026-10-05", 1); assert.equal(result.ok, false); assert.equal(calls, 3);
     global.fetch = async (input) => { const url = new URL(String(input)); if (url.searchParams.has("after")) throw new Error("URL meta-test-secret"); url.searchParams.set("after", "2"); return Response.json({ data: [stats("1")], paging: { next: url.toString() } }); };
-    result = await fetchMetaAdContents("123", "2026-09-29", "2026-10-05"); assert.equal(result.ok, false); assert.ok(!JSON.stringify(result).includes("meta-test-secret")); assert.ok(!("ads" in result));
+    result = await fetchMetaAdContents("123", "2026-09-29", "2026-10-05", 1); assert.equal(result.ok, false); assert.ok(!JSON.stringify(result).includes("meta-test-secret")); assert.ok(!("ads" in result));
   } finally { global.fetch = original; }
 });

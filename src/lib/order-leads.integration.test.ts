@@ -1,0 +1,93 @@
+import assert from "node:assert/strict";
+import { after, test } from "node:test";
+import { and, eq, inArray } from "drizzle-orm";
+import { db } from "@/db";
+import { advertiserReportItems, campaigns, dailyReports, kpiEntries, kpiMetrics, orderForms, orderLeadEvents, orderLeads, users } from "@/db/schema";
+import { createFormChallenge, saveOrderForm, submitOrderLead, updateOrderLead, verifyFormChallenge } from "./order-leads";
+import { DEFAULT_ORDER_FIELDS, orderFieldsSchema, normalizePhone, validateCustomer } from "./order-form-input";
+import { jakartaDate } from "./sheets-report";
+import { getEntries } from "./data";
+import { getFormLeadCounts } from "./form-lead-metrics";
+after(async()=>{await db.$client.end();});
+test("field policy, phone normalization and signed form-bound expiring tokens",()=>{
+ assert.equal(normalizePhone("0812-3456-7890"),"6281234567890");assert.throws(()=>normalizePhone("abc"));
+ assert.equal(orderFieldsSchema.safeParse({name:"off",phone:"off",email:"off",city:"required"}).success,false);
+ assert.deepEqual(validateCustomer({name:"off",phone:"required",email:"off",city:"off"},{name:"not stored",phone:"081234567890",email:"not stored"}),{name:null,phone:"6281234567890",email:null,city:null});
+ const token=createFormChallenge("a",1000);assert.equal(verifyFormChallenge("a",token,1001).length,64);
+ assert.throws(()=>verifyFormChallenge("b",token,1001));assert.throws(()=>verifyFormChallenge("a",token,7201000));assert.throws(()=>verifyFormChallenge("a",token+"x",1001));
+});
+test("ownership, routing, concurrent idempotency, organic separation, cutoff, KPI and reassign isolation",async()=>{
+ const tag=crypto.randomUUID();const ids:number[]=[];let campaignId=0;const reportIds:number[]=[];
+ try{
+  for(const [role,name] of [["advertiser","owner"],["advertiser","stranger"],["cso","one"],["cso","two"],["supervisor","boss"]] as const){
+   const [row]=await db.insert(users).values({name:`Order QA ${name}`,email:`${name}-${tag}@example.invalid`,passwordHash:"inaccessible",role,csoPhone:role==="cso"?"6281234567890":null}).returning();ids.push(row.id);
+  }
+  const actor={id:ids[0],role:"advertiser"};const [product]=await db.insert(campaigns).values({name:`QA ${tag}`,product:"QA product",ownerId:actor.id,platform:"meta"}).returning();campaignId=product.id;
+  const date=jakartaDate();const early=new Date(`${date}T10:00:00+07:00`),late=new Date(`${date}T23:59:00+07:00`);
+  const data={campaignId,title:"QA registration",description:"",fields:DEFAULT_ORDER_FIELDS,routing:"round_robin",assigneeIds:[ids[2],ids[3]],published:true,source:"ads",message:"Halo CSO",useFormLeads:true,effectiveDate:date};
+  await assert.rejects(()=>db.transaction(tx=>saveOrderForm(tx,{id:ids[1],role:"advertiser"},data)),/Produk/);
+  await assert.rejects(()=>db.transaction(tx=>saveOrderForm(tx,{id:ids[2],role:"cso"},data)),/akses/);
+  await assert.rejects(()=>db.transaction(tx=>saveOrderForm(tx,actor,{...data,assigneeIds:[ids[1]]})),/CSO aktif/);
+  const form=await db.transaction(tx=>saveOrderForm(tx,actor,data));
+  assert.equal((await db.select().from(campaigns).where(eq(campaigns.id,campaignId)))[0].formLeadSince,date);
+  const token=createFormChallenge(form.slug,early.getTime());const raw={name:"Customer",phone:"081234560000",email:"customer@example.invalid",city:"Malang"};
+  const pair=await Promise.all([1,2].map(()=>db.transaction(tx=>submitOrderLead(tx,form.slug,token,raw,{},early))));
+  assert.equal(pair[0].reference,pair[1].reference);
+  let leads=await db.select().from(orderLeads).where(eq(orderLeads.formId,form.id));assert.equal(leads.length,1);assert.equal(leads[0].assigneeId,ids[2]);assert.equal(leads[0].ownerId,actor.id);
+  assert.ok(pair[0].url.startsWith("https://wa.me/6281234567890?text="));
+  await assert.rejects(()=>db.transaction(tx=>submitOrderLead(tx,form.slug,createFormChallenge(form.slug,early.getTime()),raw,{},early)),/sudah terdaftar/);
+  await db.transaction(tx=>submitOrderLead(tx,form.slug,createFormChallenge(form.slug,early.getTime()),{...raw,phone:"081234560001"},{utm_source:"facebook"},early));
+  leads=await db.select().from(orderLeads).where(eq(orderLeads.formId,form.id));assert.equal(leads.length,2);assert.equal(leads.find(r=>r.phone==="6281234560001")?.assigneeId,ids[3]);
+  await db.update(users).set({isActive:false}).where(eq(users.id,ids[2]));
+  await db.transaction(tx=>submitOrderLead(tx,form.slug,createFormChallenge(form.slug,early.getTime()),{...raw,phone:"081234560002"},{},early));
+  await db.update(users).set({isActive:false}).where(eq(users.id,ids[3]));
+  await assert.rejects(()=>db.transaction(tx=>submitOrderLead(tx,form.slug,createFormChallenge(form.slug,early.getTime()),{...raw,phone:"081234560003"},{},early)),/CSO belum tersedia/);
+  await db.update(users).set({isActive:true}).where(inArray(users.id,[ids[2],ids[3]]));
+  const organic=await db.transaction(tx=>saveOrderForm(tx,actor,{...data,source:"organic",useFormLeads:false,routing:"fixed",assigneeIds:[ids[2]]}));
+  await db.transaction(tx=>submitOrderLead(tx,organic.slug,createFormChallenge(organic.slug,early.getTime()),{...raw,phone:"081234560004"},{},early));
+  assert.equal((await getFormLeadCounts(date,date,[actor.id]))[0].leads,3);
+  const beforeEntries=await getEntries(date,date,[actor.id]);
+  const [leadMetric]=await db.select().from(kpiMetrics).where(and(eq(kpiMetrics.role,"advertiser"),eq(kpiMetrics.key,"leads")));
+  assert.equal(beforeEntries.filter(e=>e.metricId===leadMetric.id).reduce((sum,e)=>sum+e.value,0),3,"Live KPI includes forms without reports");
+  const [full]=await db.insert(dailyReports).values({userId:actor.id,date,summary:"QA"}).returning();reportIds.push(full.id);
+  const nextDate=jakartaDate(new Date(early.getTime()+86400000));
+  const [partial]=await db.insert(dailyReports).values({userId:actor.id,date:nextDate,summary:"QA"}).returning();reportIds.push(partial.id);
+  await db.insert(advertiserReportItems).values([{reportId:full.id,campaignId,performanceDate:date,window:"previous_day",platform:"meta",product:"QA",spent:100,impressions:20,clicks:10,leads:77},{reportId:partial.id,campaignId,performanceDate:date,window:"today_to_cutoff",platform:"meta",product:"QA",spent:100,impressions:20,clicks:10,leads:88}]);
+  const [metric]=await db.select().from(kpiMetrics).where(and(eq(kpiMetrics.role,"advertiser"),eq(kpiMetrics.key,"leads")));
+  await db.insert(kpiEntries).values({reportId:full.id,userId:actor.id,metricId:metric.id,date,value:77});
+  await db.transaction(tx=>submitOrderLead(tx,form.slug,createFormChallenge(form.slug,late.getTime()),{...raw,phone:"081234560005"},{},late));
+  const items=await db.select().from(advertiserReportItems).where(inArray(advertiserReportItems.reportId,reportIds));
+  assert.equal(items.find(i=>i.window==="previous_day")?.leads,4);assert.equal(items.find(i=>i.window==="today_to_cutoff")?.leads,3);
+  assert.equal(items.find(i=>i.window==="previous_day")?.adsLeads,77);assert.equal(items[0].leadSource,"form");
+  assert.equal((await db.select().from(kpiEntries).where(eq(kpiEntries.reportId,full.id)))[0].value,4);
+  assert.equal((await getFormLeadCounts(date,date,[actor.id],db,{date,cutoff:"15:30"}))[0].leads,3);
+  const afterEntries=await getEntries(date,date,[actor.id]);
+  assert.equal(afterEntries.filter(e=>e.metricId===leadMetric.id).reduce((sum,e)=>sum+e.value,0),4,"Saved report must not double-count live leads");
+  leads.sort((a,b)=>a.id-b.id);
+  await assert.rejects(()=>db.transaction(tx=>updateOrderLead(tx,{id:ids[1],role:"advertiser"},leads[0].id,"won","stolen")),/tidak ditemukan/);
+  await assert.rejects(()=>db.transaction(tx=>updateOrderLead(tx,{id:ids[3],role:"cso"},leads[0].id,"won","stolen")),/tidak ditemukan/);
+  await db.transaction(tx=>updateOrderLead(tx,{id:ids[2],role:"cso"},leads[0].id,"contacted","Customer contacted"));
+  await db.transaction(tx=>updateOrderLead(tx,actor,leads[0].id,"follow_up","Reassigned",ids[3]));
+  await assert.rejects(()=>db.transaction(tx=>updateOrderLead(tx,{id:ids[2],role:"cso"},leads[0].id,"won","old access")),/tidak ditemukan/);
+  const moved=(await db.select().from(orderLeads).where(eq(orderLeads.id,leads[0].id)))[0];assert.equal(moved.ownerId,actor.id);assert.equal(moved.assigneeId,ids[3]);
+  assert.equal((await db.select().from(orderLeadEvents).where(eq(orderLeadEvents.leadId,moved.id))).length,2);
+  const weighted=await db.transaction(tx=>saveOrderForm(tx,actor,{...data,routing:"weighted",weights:{[ids[2]]:75,[ids[3]]:25},appearance:{buttonText:"Konsultasi via WA",buttonColor:"#2255aa",layout:"plain",showLabels:true,placeholders:{name:"Nama",phone:"WhatsApp",email:"Email",city:"Kota"}},tracking:{metaPixelIds:["1234567890"],gtmIds:["GTM-ABCD123"],tiktokPixelIds:[]}}));
+  assert.equal(weighted.appearance.buttonText,"Konsultasi via WA");assert.equal(weighted.tracking.gtmIds[0],"GTM-ABCD123");
+  await Promise.all(Array.from({length:8},(_,i)=>db.transaction(tx=>submitOrderLead(tx,weighted.slug,createFormChallenge(weighted.slug,early.getTime()),{...raw,phone:`08129999100${i}`},{},early))));
+  const distributed=await db.select().from(orderLeads).where(eq(orderLeads.formId,weighted.id));
+  assert.equal(distributed.filter(l=>l.assigneeId===ids[2]).length,6);assert.equal(distributed.filter(l=>l.assigneeId===ids[3]).length,2);
+  const target=distributed[0];const commerce={paymentStatus:"paid" as const,revenue:1200000,followUpStep:2,followUpAt:`${date}T15:00:00+07:00`};
+  await assert.rejects(()=>db.transaction(tx=>updateOrderLead(tx,{id:ids[1],role:"advertiser"},target.id,"won","invalid",undefined,commerce)),/tidak ditemukan/);
+  await db.transaction(tx=>updateOrderLead(tx,{id:target.assigneeId,role:"cso"},target.id,"won","Lunas",undefined,commerce));
+  const [paid]=await db.select().from(orderLeads).where(eq(orderLeads.id,target.id));assert.equal(paid.revenue,1200000);assert.equal(paid.followUpStep,2);assert.equal(paid.paymentStatus,"paid");assert.equal(paid.followUpAt?.toISOString(),new Date(commerce.followUpAt).toISOString());
+  await assert.rejects(()=>db.transaction(tx=>updateOrderLead(tx,actor,target.id,"won","bad",undefined,{...commerce,revenue:-1})),/tidak valid/);
+  await db.transaction(tx=>saveOrderForm(tx,actor,{...data,id:form.id,published:false}));
+  await assert.rejects(()=>db.transaction(tx=>submitOrderLead(tx,form.slug,createFormChallenge(form.slug,early.getTime()),{...raw,phone:"081234569999"},{},early)),/tidak menerima/);
+  assert.equal((await db.transaction(tx=>submitOrderLead(tx,form.slug,token,raw,{},early))).reference,pair[0].reference);
+ }finally{
+  if(campaignId){await db.delete(orderLeads).where(eq(orderLeads.campaignId,campaignId));await db.delete(orderForms).where(eq(orderForms.campaignId,campaignId));}
+  if(reportIds.length)await db.delete(dailyReports).where(inArray(dailyReports.id,reportIds));
+  if(campaignId)await db.delete(campaigns).where(eq(campaigns.id,campaignId));
+  if(ids.length)await db.delete(users).where(inArray(users.id,ids));
+ }
+});

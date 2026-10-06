@@ -79,7 +79,7 @@ export type ReportRange = { value: string; label: string; start: string; end: st
  * Date range for the advertiser report list from ?range=: today, yesterday, 7d, 14d, 30d or a
  * month (YYYY-MM). Anything else falls back to the current month.
  */
-export function resolveReportRange(raw: string | undefined, today: string) {
+export function resolveReportRange(raw: string | undefined, today: string, historicalMonths: string[] = []) {
   const monthLabel = (month: string) =>
     parseISODate(`${month}-01`).toLocaleDateString("id-ID", { month: "long", year: "numeric" });
   const monthRange = (month: string) => {
@@ -105,6 +105,11 @@ export function resolveReportRange(raw: string | undefined, today: string) {
     { value: "all", label: "Bulan ini", ...monthRange(currentMonth) },
     ...months.slice(1).map((month) => ({ value: month, label: monthLabel(month), ...monthRange(month) })),
   ];
+  for (const month of historicalMonths) {
+    if (/^\d{4}-(0[1-9]|1[0-2])$/.test(month) && month < currentMonth && !options.some((o) => o.value === month)) {
+      options.push({ value: month, label: monthLabel(month), ...monthRange(month) });
+    }
+  }
   const range = options.find((option) => option.value === raw) ?? options.find((option) => option.value === "all")!;
   return { range, options };
 }

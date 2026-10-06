@@ -39,7 +39,7 @@ export async function saveAdAccount(_: FormState, formData: FormData): Promise<F
   // System User assignment shows up now instead of on the first "Generate dari Ads".
   let message = "Akun iklan ditambahkan";
   if (parsed.data.platform === "meta") {
-    const check = await checkMetaAdAccount(parsed.data.accountId);
+    const check = await checkMetaAdAccount(parsed.data.accountId, user.id);
     if (!check.ok && !check.missingToken && !check.network) return { error: check.error };
     message = check.ok
       ? `Akun iklan ditambahkan dan terhubung ke Meta (${check.name})`
@@ -65,14 +65,14 @@ export async function deleteAdAccount(id: number) {
 export async function syncAdCampaigns() {
   const user = await requireUser();
   if (!can.editCampaigns(user.role)) return { error: "Kamu tidak punya akses sinkron campaign." };
-  const accounts = await db.select().from(adAccounts);
+  const accounts = await db.select().from(adAccounts).where(user.role === "supervisor" ? undefined : eq(adAccounts.createdById, user.id));
   if (!accounts.length) return { error: "Tambahkan akun iklan terlebih dahulu." };
 
   const results = await Promise.all(
     accounts.map(async (account) => {
       if (account.platform !== "meta" && account.platform !== "google") return { account, count: 0, error: null };
       const startedAt = new Date();
-      const result = await fetchAccountCampaignList({ platform: account.platform, accountId: account.accountId });
+      const result = await fetchAccountCampaignList({ platform: account.platform, accountId: account.accountId, createdById: account.createdById });
       if (!result.ok) {
         await db.update(adAccounts).set({ lastSyncError: result.error }).where(eq(adAccounts.id, account.id));
         return { account, count: 0, error: result.error };
@@ -149,7 +149,7 @@ async function editableGoogleAccount(id: number) {
 export async function getLpvConversionOptions(id: number) {
   const account = await editableGoogleAccount(id);
   if (!account) return { ok: false as const, error: "Tidak punya akses mengatur akun ini." };
-  return fetchGoogleConversionActions(account.accountId);
+  return fetchGoogleConversionActions(account.accountId, account.createdById);
 }
 
 export async function saveLpvConversion(id: number, resource: string) {
@@ -157,7 +157,7 @@ export async function saveLpvConversion(id: number, resource: string) {
   if (!account) return { error: "Tidak punya akses mengatur akun ini." };
   if (resource) {
     if (!validGoogleConversionResource(resource)) return { error: "Konversi LPV tidak valid." };
-    const options = await fetchGoogleConversionActions(account.accountId);
+    const options = await fetchGoogleConversionActions(account.accountId, account.createdById);
     if (!options.ok) return { error: options.error };
     if (!options.actions.some((a) => a.resourceName === resource)) return { error: "Konversi tidak aktif atau bukan milik akun ini." };
   }

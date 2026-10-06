@@ -1,13 +1,13 @@
 import "server-only";
-import { inArray } from "drizzle-orm";
+import { readUserIntegrationSettings, userIntegrationKey } from "./integration-settings";
 import { db } from "@/db";
 import { appSettings } from "@/db/schema";
 import { decryptSecret, encryptSecret } from "@/lib/secret-box";
 
 /**
  * The Meta Marketing API connection: an access token (plus optional app ID / secret to turn a
- * short-lived user token into a 60-day one), entered by a supervisor in Settings and stored
- * encrypted in `app_settings`. META_ACCESS_TOKEN in .env is still honoured as a fallback.
+ * short-lived user token into a 60-day one), entered per user in Settings and stored
+ * encrypted in `app_settings`. Legacy saved credentials remain available only to their original owner.
  */
 
 const KEYS = {
@@ -60,22 +60,17 @@ export type MetaConnectionStatus = {
 
 const hint = (token: string) => token.slice(-4);
 
-async function readSettings(): Promise<Partial<Record<Key, string>>> {
-  const rows = await db.select().from(appSettings).where(inArray(appSettings.key, Object.values(KEYS)));
-  return Object.fromEntries(rows.map((row) => [row.key, row.value]));
+async function readSettings(userId: number | null): Promise<Partial<Record<Key, string>>> {
+  return readUserIntegrationSettings(Object.values(KEYS), userId);
 }
 
 async function writeSettings(values: Partial<Record<Key, string | null>>, userId: number) {
-  const entries = Object.entries(values) as [Key, string | null][];
-  const remove = entries.filter(([, value]) => value === null).map(([key]) => key);
-  const upsert = entries.filter((entry): entry is [Key, string] => entry[1] !== null);
-  if (remove.length) await db.delete(appSettings).where(inArray(appSettings.key, remove));
-  for (const [key, value] of upsert) {
-    await db
-      .insert(appSettings)
-      .values({ key, value, updatedById: userId })
-      .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedById: userId, updatedAt: new Date() } });
-  }
+  await db.transaction(async (tx) => {
+    for (const [key, value] of Object.entries(values)) {
+      await tx.insert(appSettings).values({ key: userIntegrationKey(key, userId), value: value ?? "", updatedById: userId })
+        .onConflictDoUpdate({ target: appSettings.key, set: { value: value ?? "", updatedById: userId, updatedAt: new Date() } });
+    }
+  });
 }
 
 type Stored = {
@@ -87,8 +82,8 @@ type Stored = {
   problem: string | null;
 };
 
-async function readStored(): Promise<Stored> {
-  const settings = await readSettings();
+async function readStored(userId: number | null): Promise<Stored> {
+  const settings = await readSettings(userId);
   const storedToken = settings[KEYS.token];
   const storedSecret = settings[KEYS.appSecret];
   const storedInfo = settings[KEYS.info];
@@ -99,10 +94,6 @@ async function readStored(): Promise<Stored> {
     token = decryptSecret(storedToken);
     if (token) source = "app";
     else problem = "Token tersimpan tidak bisa dibaca (AUTH_SECRET berubah). Tempel ulang token Meta.";
-  }
-  if (!token && process.env.META_ACCESS_TOKEN?.trim()) {
-    token = process.env.META_ACCESS_TOKEN.trim();
-    source = "env";
   }
   const appSecret = storedSecret ? decryptSecret(storedSecret) : null;
   let info: MetaTokenInfo | null = null;
@@ -117,8 +108,8 @@ async function readStored(): Promise<Stored> {
 }
 
 /** The token used for every Meta Marketing API call, or null when nothing is configured. */
-export async function getMetaToken() {
-  return (await readStored()).token;
+export async function getMetaToken(userId: number | null) {
+  return (await readStored(userId)).token;
 }
 
 const TOKEN_TYPE: Record<string, string> = { SYSTEM_USER: "System User", USER: "token user", PAGE: "token page" };
@@ -141,8 +132,8 @@ function describe(status: Omit<MetaConnectionStatus, "summary" | "checkedLabel">
   return parts.join(" · ");
 }
 
-export async function getMetaConnectionStatus(): Promise<MetaConnectionStatus> {
-  const status = await connectionState();
+export async function getMetaConnectionStatus(userId: number | null): Promise<MetaConnectionStatus> {
+  const status = await connectionState(userId);
   return {
     ...status,
     summary: describe(status),
@@ -152,8 +143,8 @@ export async function getMetaConnectionStatus(): Promise<MetaConnectionStatus> {
   };
 }
 
-async function connectionState(): Promise<Omit<MetaConnectionStatus, "summary" | "checkedLabel">> {
-  const stored = await readStored();
+async function connectionState(userId: number | null): Promise<Omit<MetaConnectionStatus, "summary" | "checkedLabel">> {
+  const stored = await readStored(userId);
   const base = {
     source: stored.source,
     tokenHint: stored.token ? hint(stored.token) : null,
@@ -193,7 +184,7 @@ export function metaErrorMessage(error: MetaApiError | undefined, status?: numbe
 }
 
 export const META_TOKEN_MISSING =
-  "Token Meta Ads belum diisi. Supervisor bisa mengisinya di Settings → Koneksi Meta Ads.";
+  "Token Meta Ads belum diisi. Isi koneksi Anda di Settings → Integrasi → Meta Ads.";
 
 type GraphResult<T> = { ok: true; data: T } | { ok: false; error: string; code?: number };
 
@@ -202,13 +193,13 @@ async function graph<T>(path: string, accessToken: string, params: Record<string
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
   url.searchParams.set("access_token", accessToken);
   try {
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(20000) });
     const body = (await res.json().catch(() => null)) as (T & { error?: MetaApiError }) | null;
     if (!body) return { ok: false, error: `Gagal menghubungi Meta API: respons tidak valid (HTTP ${res.status}).` };
     if (!res.ok || body.error) return { ok: false, error: metaErrorMessage(body.error, res.status), code: body.error?.code };
     return { ok: true, data: body };
-  } catch (error) {
-    return { ok: false, error: `Gagal menghubungi Meta API: ${(error as Error).message}` };
+  } catch {
+    return { ok: false, error: "Gagal menghubungi Meta API. Periksa koneksi server dan coba lagi." };
   }
 }
 
@@ -263,12 +254,12 @@ async function exchangeForLongLived(token: string, app: { id: string; secret: st
   url.searchParams.set("client_secret", app.secret);
   url.searchParams.set("fb_exchange_token", token);
   try {
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(20000) });
     const body = (await res.json().catch(() => ({}))) as { access_token?: string; error?: MetaApiError };
     if (!res.ok || !body.access_token) return { ok: false, error: metaErrorMessage(body.error, res.status) };
     return { ok: true, data: body.access_token };
-  } catch (error) {
-    return { ok: false, error: `Gagal menghubungi Meta API: ${(error as Error).message}` };
+  } catch {
+    return { ok: false, error: "Gagal menghubungi Meta API. Periksa koneksi server dan coba lagi." };
   }
 }
 
@@ -295,8 +286,8 @@ export async function listMetaAdAccounts(token: string): Promise<GraphResult<Met
 }
 
 /** Confirms the configured token can read one ad account. */
-export async function checkMetaAdAccount(accountId: string): Promise<{ ok: true; name: string } | { ok: false; error: string; missingToken?: boolean; network?: boolean }> {
-  const token = await getMetaToken();
+export async function checkMetaAdAccount(accountId: string, userId: number | null): Promise<{ ok: true; name: string } | { ok: false; error: string; missingToken?: boolean; network?: boolean }> {
+  const token = await getMetaToken(userId);
   if (!token) return { ok: false, error: META_TOKEN_MISSING, missingToken: true };
   const res = await graph<{ name?: string }>(`act_${accountId}`, token, { fields: "name,account_status" });
   if (!res.ok) return { ok: false, error: res.error, network: res.code === undefined && res.error.startsWith("Gagal menghubungi") };
@@ -312,7 +303,7 @@ export type SaveMetaInput = { token?: string; appId?: string; appSecret?: string
  * an app ID + secret are available. Blank fields keep what's already stored.
  */
 export async function saveMetaConnection(input: SaveMetaInput, userId: number): Promise<{ ok: true; info: MetaTokenInfo } | { ok: false; error: string }> {
-  const stored = await readStored();
+  const stored = await readStored(userId);
   const appId = input.appId?.trim() || stored.appId;
   const appSecret = input.appSecret?.trim() || stored.appSecret;
   const app = appId && appSecret ? { id: appId, secret: appSecret } : null;
@@ -345,7 +336,7 @@ export async function saveMetaConnection(input: SaveMetaInput, userId: number): 
 
 /** Re-checks the current token (from the app or .env) and lists the ad accounts it can read. */
 export async function testMetaConnection(userId: number) {
-  const stored = await readStored();
+  const stored = await readStored(userId);
   if (!stored.token) return { ok: false as const, error: stored.problem ?? META_TOKEN_MISSING };
   const app = stored.appId && stored.appSecret ? { id: stored.appId, secret: stored.appSecret } : null;
   const info = await inspectMetaToken(stored.token, app);
