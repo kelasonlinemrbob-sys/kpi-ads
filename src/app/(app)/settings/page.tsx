@@ -1,25 +1,35 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { and, eq } from "drizzle-orm";
-import { SendIcon, TableIcon, ArrowRightIcon, ClipboardClockIcon, KeyRoundIcon, MessageCircleIcon, MegaphoneIcon, PaletteIcon, PlugIcon, UserIcon, type LucideIcon } from "lucide-react";
+import { UserRoundCheckIcon, SendIcon, TableIcon, ArrowRightIcon, ClipboardClockIcon, KeyRoundIcon, MessageCircleIcon, MegaphoneIcon, PaletteIcon, PlugIcon, SparklesIcon, UserIcon, type LucideIcon } from "lucide-react";
 import { db } from "@/db";
 import { adAccounts } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
-import { roleSlots } from "@/lib/member-roles";
+import { isTracked, roleSlots } from "@/lib/member-roles";
+import { creativeLabel } from "@/lib/ads-scope";
 import { getGoogleConnectionStatus } from "@/lib/google-connection";
 import { GoogleConnectGuide } from "@/components/google-connect-guide";
 import { getSheetsStatus } from "@/lib/google-sheets";
 import { GoogleSheetsCard } from "./google-sheets-card";
 import { GoogleConnectionCard } from "./google-connection-card";
+import { SearchConsoleCard } from "./search-console-card";
+import { SearchConsoleWebsitePicker } from "./search-console-website-picker";
+import { getSearchConsoleMemberStatus, getSearchConsoleStatus } from "@/lib/search-console";
+import { getKieConnectionStatus } from "@/lib/kie-connection";
+import { periodRange, todayISO } from "@/lib/kpi";
+import { getRegistrationStatus } from "@/lib/registrations";
 import { getMetaConnectionStatus } from "@/lib/meta-connection";
 import { getReportRules } from "@/lib/report-rules";
-import { can, ROLE_LABEL, roleLabel } from "@/lib/roles";
+import { can, canViewSeo, ROLE_LABEL, roleLabel } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { MetaStatusBadge } from "@/components/meta-status";
 import { PageHeader } from "@/components/dashboard/panel";
 import { getWhatsAppStatus } from "@/actions/whatsapp";
 import { HashToTab } from "./hash-to-tab";
+import { KieConnectionCard, KieStatusBadge } from "./kie-connection-card";
+import { RegistrationsCard, RegistrationsStatusBadge } from "./registrations-card";
+import { AdAccountPicker } from "./ad-account-picker";
 import { MetaConnectionCard } from "./meta-connection-card";
 import { AppearanceSection, ProfileSection, ReportRulesSection, SecuritySection } from "./settings-sections";
 import { getTelegramStatus } from "@/actions/telegram";
@@ -36,7 +46,7 @@ const formatDateTime = (d: Date | null) =>
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ tab?: string; service?: string }> }) {
   const user = await requireUser(true);
   const { tab: requested, service } = await searchParams;
-  const showIntegrations = can.editCampaigns(user.role);
+  const showIntegrations = can.editCampaigns(user.role) || canViewSeo(user);
   const supervisor = user.role === "supervisor";
 
   const tabs: Tab[] = [
@@ -49,7 +59,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             key: "integrasi",
             label: "Integrasi",
             icon: PlugIcon,
-            description: can.runAds(user.role) ? "WhatsApp, Telegram, Google Sheets, serta koneksi Meta dan Google Ads." : "Koneksi Meta dan Google Ads untuk Generate & Sinkron dari Ads.",
+            description: can.runAds(user.role) ? "WhatsApp, Telegram, Google Sheets, Meta, Google Ads, Search Console, serta Kie AI." : "Google Search Console untuk performa pencarian organik website.",
           },
         ]
       : []),
@@ -92,7 +102,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               avatarId={user.avatarId}
               title={user.title}
               email={user.email}
-              roles={supervisor ? ["Supervisor", "Operasional iklan"] : roleSlots(user).map((slot, i) =>
+              roles={supervisor ? ["Supervisor", "Operasional iklan"] : !isTracked(user) ? [user.role === "creative" ? await creativeLabel(user.id) : ROLE_LABEL[user.role]] : roleSlots(user).map((slot, i) =>
                 i === 0
                   ? `${roleLabel(slot.role, user.advertiserLevel)}${slot.share < 100 ? ` · ${slot.share}%` : ""}`
                   : `${ROLE_LABEL[slot.role]} · ${slot.share}%`,
@@ -106,7 +116,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           )}
           {active.key === "keamanan" && <SecuritySection />}
           {active.key === "tampilan" && <AppearanceSection />}
-          {active.key === "integrasi" && <Integrations userId={user.id} userRole={user.role} requestedService={service} />}
+          {active.key === "integrasi" && <Integrations userId={user.id} userRole={user.role} seoAccess={canViewSeo(user)} requestedService={service} />}
           {active.key === "aturan" && <ReportRulesSection {...await getReportRules()} />}
         </section>
       </div>
@@ -114,24 +124,38 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   );
 }
 
-async function Integrations({ userId, userRole, requestedService }: { userId: number; userRole: import("@/db/schema").Role; requestedService?: string }) {
-  const [metaStatus, metaAccounts, wa, googleStatus, googleAccounts, sheetsStatus, telegram] = await Promise.all([
-    getMetaConnectionStatus(userId),
+async function Integrations({ userId, userRole, seoAccess, requestedService }: { userId: number; userRole: import("@/db/schema").Role; seoAccess: boolean; requestedService?: string }) {
+  if (!can.editCampaigns(userRole)) {
+    if (!seoAccess) return null;
+    const status = await getSearchConsoleMemberStatus();
+    return <SearchConsoleWebsitePicker connected={status.connected} connectionError={status.error} />;
+  }
+  const searchConsole = seoAccess ? await getSearchConsoleStatus() : null;
+  const month = periodRange(todayISO().slice(0, 7));
+  const [metaStatus, metaAccounts, wa, googleStatus, googleAccounts, sheetsStatus, telegram, kieStatus, registrations, kelasOnline] = await Promise.all([
+    getMetaConnectionStatus(),
     db.select({ accountId: adAccounts.accountId }).from(adAccounts).where(and(eq(adAccounts.platform, "meta"), eq(adAccounts.createdById, userId))),
     can.runAds(userRole) ? getWhatsAppStatus() : Promise.resolve(null),
-    getGoogleConnectionStatus(userId),
+    getGoogleConnectionStatus(),
     db.select({ accountId: adAccounts.accountId }).from(adAccounts).where(and(eq(adAccounts.platform, "google"), eq(adAccounts.createdById, userId))),
     getSheetsStatus(),
     can.runAds(userRole) ? getTelegramStatus() : Promise.resolve(null),
+    can.runAds(userRole) ? getKieConnectionStatus() : Promise.resolve(null),
+    getRegistrationStatus(month, "lkbi"),
+    getRegistrationStatus(month, "kelas"),
   ]);
   const googleLabels = { none: "Belum terhubung", configured: "Belum dites", ok: "Tes berhasil", error: "Perlu diperiksa", disabled: "Dinonaktifkan" };
   const services = [
+    ...(searchConsole ? [{ key: "search-console", name: "Google Search Console", description: "Klik, impresi, kata kunci, dan performa SEO.", icon: PlugIcon, color: "bg-success/10 text-success", badge: <Badge variant={searchConsole.connected ? "success" : "outline"}>{searchConsole.connected ? "Terhubung" : "Belum terhubung"}</Badge>, detail: "Koneksi tim SEO · Supervisor" }] : []),
     ...(wa ? [{ key: "whatsapp", name: "WhatsApp", description: "Kirim ringkasan laporan ke grup tim.", icon: MessageCircleIcon, color: "bg-success/10 text-success", badge: <Badge variant={!wa.workerAlive ? "warning" : wa.status === "connected" ? "success" : "outline"}>{!wa.workerAlive ? "Layanan offline" : wa.status === "connected" ? "Terhubung" : wa.wantConnected ? "Menghubungkan" : "Belum terhubung"}</Badge>, detail: "Koneksi pribadi" }] : []),
-    { key: "meta-ads", name: "Meta Ads", description: "Campaign, creative, dan metrik iklan.", icon: MegaphoneIcon, color: "bg-info/10 text-info", badge: <MetaStatusBadge status={metaStatus} />, detail: `${metaAccounts.length} akun iklan terdaftar` },
-    { key: "google-ads", name: "Google Ads", description: "Campaign dan metrik akun Google.", icon: PlugIcon, color: "bg-warning/10 text-warning", badge: <Badge variant={googleStatus.state === "ok" ? "success" : googleStatus.state === "error" ? "warning" : "outline"}>{googleLabels[googleStatus.state]}</Badge>, detail: `${googleAccounts.length} akun iklan terdaftar` },
+    { key: "meta-ads", name: "Meta Ads", description: "Campaign, creative, dan metrik iklan.", icon: MegaphoneIcon, color: "bg-info/10 text-info", badge: <MetaStatusBadge status={metaStatus} />, detail: `Koneksi tim · ${metaAccounts.length} akun iklan saya` },
+    { key: "google-ads", name: "Google Ads", description: "Campaign dan metrik akun Google.", icon: PlugIcon, color: "bg-warning/10 text-warning", badge: <Badge variant={googleStatus.state === "ok" ? "success" : googleStatus.state === "error" ? "warning" : "outline"}>{googleLabels[googleStatus.state]}</Badge>, detail: `Koneksi tim · ${googleAccounts.length} akun iklan saya` },
   ];
   services.push({ key: "google-sheets", name: "Google Sheets", description: "Laporan advertiser sehari penuh ke spreadsheet.", icon: TableIcon, color: "bg-success/10 text-success", badge: <Badge variant={sheetsStatus.error ? "warning" : sheetsStatus.enabled ? "success" : "outline"}>{sheetsStatus.error ? "Perlu diperiksa" : sheetsStatus.enabled ? "Otomatis aktif" : "Belum aktif / dijeda"}</Badge>, detail: `Bersama · ${sheetsStatus.eligible} baris sehari penuh` });
   if (telegram) services.push({ key: "telegram", name: "Telegram", description: "Kirim laporan ke grup melalui bot Telegram.", icon: SendIcon, color: "bg-info/10 text-info", badge: <Badge variant={!telegram.workerAlive ? "warning" : telegram.connected ? "success" : "outline"}>{!telegram.workerAlive ? "Layanan offline" : telegram.connected ? "Terhubung" : "Belum terhubung"}</Badge>, detail: "Integrasi bersama · Supervisor" });
+  if (kieStatus) services.push({ key: "kie-ai", name: "Kie AI", description: "Analisa iklan dan creative otomatis dengan AI.", icon: SparklesIcon, color: "bg-primary/10 text-foreground", badge: <KieStatusBadge status={kieStatus} />, detail: "Koneksi tim · Supervisor" });
+  services.push({ key: "kelas-online", name: "Kelas Online", description: "Closing & revenue dari pendaftaran Kelas Online.", icon: UserRoundCheckIcon, color: "bg-info/10 text-info", badge: <RegistrationsStatusBadge status={kelasOnline} />, detail: `Koneksi tim · ${kelasOnline.byProduct.length} produk terpetakan` });
+  services.push({ key: "pendaftaran", name: "Pendaftaran LKBI", description: "Closing & revenue dari aplikasi pendaftaran.", icon: UserRoundCheckIcon, color: "bg-success/10 text-success", badge: <RegistrationsStatusBadge status={registrations} />, detail: `Koneksi tim · ${registrations.byProduct.length} produk terpetakan` });
   const selected = services.find((item) => item.key === requestedService) ?? services[0];
   return (
     <div className="grid min-w-0 gap-5">
@@ -146,14 +170,32 @@ async function Integrations({ userId, userRole, requestedService }: { userId: nu
         ))}
       </nav>
       <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
-        <div><h3 className="font-semibold">Kelola {selected.name}</h3><p className="mt-0.5 text-xs text-muted-foreground">{selected.key === "whatsapp" ? "Atur nomor, grup tujuan, dan pengiriman laporan pribadi Anda." : selected.key === "telegram" ? "Satu bot untuk laporan tim. Konfigurasi dikelola supervisor." : selected.key === "google-sheets" ? "Kirim laporan 24 jam. Konfigurasi dan sinkronisasi tim dikelola supervisor." : "Koneksi pribadi Anda. Kredensial ini digunakan untuk akun iklan yang Anda daftarkan."}</p></div>
-        {selected.key !== "whatsapp" && selected.key !== "google-sheets" && selected.key !== "telegram" && <Link href="/campaigns" className="inline-flex items-center gap-1.5 text-xs font-medium underline-offset-4 hover:underline">Buka Campaigns <ArrowRightIcon className="size-3.5" /></Link>}
+        <div><h3 className="font-semibold">Kelola {selected.name}</h3><p className="mt-0.5 text-xs text-muted-foreground">{selected.key === "search-console" ? "Koneksi website untuk tim SEO dan webmaster, dikelola supervisor." : selected.key === "whatsapp" ? "Atur nomor, grup tujuan, dan pengiriman laporan pribadi Anda." : selected.key === "telegram" ? "Satu bot untuk laporan tim. Konfigurasi dikelola supervisor." : selected.key === "google-sheets" ? "Kirim laporan 24 jam. Konfigurasi dan sinkronisasi tim dikelola supervisor." : selected.key === "pendaftaran" || selected.key === "kelas-online" ? "Satu koneksi untuk seluruh tim, dikelola supervisor. Pemetaan paket diatur di tiap produk." : selected.key === "kie-ai" ? (userRole === "supervisor" ? "Satu API key untuk seluruh tim. Advertiser dan creative langsung memakainya tanpa mengisi key." : "Dikelola supervisor untuk seluruh tim. Anda cukup memakai Analisa AI di halaman Creative.") : userRole === "supervisor" ? "Koneksi bersama untuk seluruh tim. Advertiser cukup memilih akun iklan masing-masing." : "Koneksi dikelola supervisor. Pilih akun iklan yang Anda kelola."}</p></div>
+        {selected.key === "kie-ai" && <Link href="/creatives" className="inline-flex items-center gap-1.5 text-xs font-medium underline-offset-4 hover:underline">Buka Creative <ArrowRightIcon className="size-3.5" /></Link>}
+        {selected.key !== "search-console" && selected.key !== "whatsapp" && selected.key !== "google-sheets" && selected.key !== "telegram" && selected.key !== "kie-ai" && selected.key !== "pendaftaran" && selected.key !== "kelas-online" && <Link href="/campaigns" className="inline-flex items-center gap-1.5 text-xs font-medium underline-offset-4 hover:underline">Buka Campaigns <ArrowRightIcon className="size-3.5" /></Link>}
       </div>
       {selected.key === "whatsapp" && wa && <div id="whatsapp" className="min-w-0 scroll-mt-4"><WhatsAppCard initial={wa} /></div>}
       {selected.key === "telegram" && telegram && <TelegramCard initial={telegram} canManage={userRole === "supervisor"} />}
       {selected.key === "google-sheets" && <GoogleSheetsCard status={sheetsStatus} canManage={userRole === "supervisor"} />}
-      {selected.key === "google-ads" && <div id="google-ads" className="min-w-0 scroll-mt-4"><GoogleConnectionCard status={googleStatus} canManage={can.runAds(userRole)} registeredAccountIds={googleAccounts.map((a) => a.accountId)} guide={<GoogleConnectGuide />} /></div>}
-      {selected.key === "meta-ads" && <div id="meta-ads" className="min-w-0 scroll-mt-4"><MetaConnectionCard status={metaStatus} canManage={can.runAds(userRole)} canAddAccounts registeredAccountIds={metaAccounts.map((a) => a.accountId)} /></div>}
+      {selected.key === "search-console" && searchConsole && (userRole === "supervisor"
+        ? <SearchConsoleCard status={searchConsole} canManage />
+        // Members (e.g. Advertiser + SEO Specialist) pick their websites, like their ad accounts.
+        : <SearchConsoleWebsitePicker connected={searchConsole.connected} connectionError={searchConsole.error ? "Koneksi Search Console perlu diperiksa supervisor." : null} />)}
+      {selected.key === "google-ads" && (
+        <div id="google-ads" className="grid min-w-0 scroll-mt-4 gap-6">
+          <GoogleConnectionCard status={googleStatus} canManage={can.manageAdsConnection(userRole)} registeredAccountIds={googleAccounts.map((a) => a.accountId)} guide={can.manageAdsConnection(userRole) ? <GoogleConnectGuide /> : null} />
+          <AdAccountPicker platform="google" connected={googleStatus.state !== "none" && googleStatus.state !== "disabled"} />
+        </div>
+      )}
+      {selected.key === "kelas-online" && <div id="kelas-online" className="min-w-0 scroll-mt-4"><RegistrationsCard status={kelasOnline} canManage={can.manageAdsConnection(userRole)} monthLabel={new Date(`${month.start}T12:00:00Z`).toLocaleDateString("id-ID", { month: "long", year: "numeric" })} /></div>}
+      {selected.key === "pendaftaran" && <div id="pendaftaran" className="min-w-0 scroll-mt-4"><RegistrationsCard status={registrations} canManage={can.manageAdsConnection(userRole)} monthLabel={new Date(`${month.start}T12:00:00Z`).toLocaleDateString("id-ID", { month: "long", year: "numeric" })} /></div>}
+      {selected.key === "kie-ai" && kieStatus && <div id="kie-ai" className="min-w-0 scroll-mt-4"><KieConnectionCard status={kieStatus} canManage={can.manageAdsConnection(userRole)} /></div>}
+      {selected.key === "meta-ads" && (
+        <div id="meta-ads" className="grid min-w-0 scroll-mt-4 gap-6">
+          <MetaConnectionCard status={metaStatus} canManage={can.manageAdsConnection(userRole)} />
+          <AdAccountPicker platform="meta" connected={metaStatus.source !== null} />
+        </div>
+      )}
     </div>
   );
 }

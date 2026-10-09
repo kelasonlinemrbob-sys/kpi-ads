@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { FIELD_LABELS, type FieldKey, type OrderFields } from "@/lib/order-form-input";
+import { FIELD_LABELS, type FieldKey, type OrderFields } from "@/lib/order-form-constants";
 import type { FormAppearance } from "@/lib/order-form-config";
 import { ArrowRightCircle } from "lucide-react";
 export function PublicOrderForm({slug,fields,token,appearance,hasTracking,hasCapi}:{slug:string;fields:OrderFields;token:string;appearance:FormAppearance;hasTracking:boolean;hasCapi:boolean}){
@@ -31,7 +31,7 @@ export function PublicOrderForm({slug,fields,token,appearance,hasTracking,hasCap
     }catch(error){setError(error instanceof Error?error.message:"Koneksi bermasalah. Coba kirim lagi.");}finally{setBusy(false);}
   }
   if(result)return <div className="of-line mt-6 border p-5" style={{borderRadius:"var(--of-card-radius)"}}><h2 className="font-semibold">Pendaftaran tersimpan</h2><p className="of-muted mt-2 text-sm">Lanjutkan ke WhatsApp lalu tekan Kirim agar CSO menerima pesan Anda.</p><a className="of-button mt-4" data-variant={appearance.buttonStyle} href={result.url} target="_blank" rel="noopener noreferrer">Lanjutkan ke WhatsApp CSO</a><p className="of-muted mt-3 break-all text-xs">Referensi: {result.reference}</p></div>;
-  return <form onSubmit={submit} className="mt-6 grid gap-4">
+  return <form onSubmit={submit} className="of-fields mt-6">
     {(Object.keys(FIELD_LABELS) as FieldKey[]).filter(key=>fields[key]!=="off").map(key=><div className="grid gap-2" key={key}><label className={appearance.showLabels?"text-sm font-medium":"sr-only"} htmlFor={key}>{FIELD_LABELS[key]} {fields[key]==="required"?"*":"(opsional)"}</label><input className="of-field" data-variant={appearance.fieldStyle} id={key} name={key} type={key==="email"?"email":key==="phone"?"tel":"text"} autoComplete={{name:"name",phone:"tel",email:"email",city:"address-level2"}[key]} placeholder={appearance.placeholders[key]+(!appearance.showLabels&&fields[key]==="required"?" *":"")} maxLength={key==="email"?180:120} required={fields[key]==="required"} /></div>)}
     <div className="absolute -left-[10000px]" aria-hidden="true"><label>Website<input name="website" tabIndex={-1} autoComplete="off" /></label></div>
     {(hasCapi||embedded&&hasTracking)&&<label className="of-muted flex items-start gap-2 text-xs leading-relaxed"><input className="mt-1" style={{accentColor:"var(--of-accent)"}} type="checkbox" name="trackingConsent" />Izinkan pengukuran iklan melalui Meta, Google atau TikTok (opsional).</label>}

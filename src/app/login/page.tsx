@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
+import { homePath } from "@/lib/roles";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { LoginForm } from "./login-form";
@@ -11,7 +13,8 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   const params = await searchParams;
   const resetDone = params.reset === "success";
   const invitationDone = params.invitation === "accepted";
-  if (await getCurrentUser()) redirect("/dashboard");
+  const user = await getCurrentUser();
+  if (user) redirect(homePath(user.role));
   return (
     <main className="relative flex min-h-dvh items-center justify-center bg-sidebar px-4 py-10">
       <ThemeToggle className="absolute top-4 right-4" />
@@ -31,6 +34,11 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           </div>
         </div>
         {(process.env.NODE_ENV !== "production" || process.env.SHOW_DEMO_ACCOUNTS === "true") && <DemoAccounts />}
+        <p className="mt-4 text-center text-xs text-muted-foreground">
+          <Link href="/" className="hover:text-foreground hover:underline">Tentang KPI Ads</Link>
+          {" · "}
+          <Link href="/privacy-policy" className="hover:text-foreground hover:underline">Kebijakan Privasi</Link>
+        </p>
       </div>
     </main>
   );

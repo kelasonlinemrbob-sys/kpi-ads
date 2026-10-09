@@ -255,7 +255,8 @@ function Bars({ series }: { series: TrendSeries }) {
         {pts.map((p, i) => {
           const d = parseISODate(p.date);
           const day = d.getDate();
-          const show = !dense || day === 1 || day % 5 === 0 || (i === n - 1 && day % 5 >= 3);
+          // Up to ~6 weeks every 5th day; longer ranges only mark the 1st (and 15th) so labels never collide.
+          const show = !dense || day === 1 || (n <= 45 ? day % 5 === 0 || (i === n - 1 && day % 5 >= 3) : n <= 120 && day === 15);
           return (
             <span
               key={p.date}
@@ -265,7 +266,11 @@ function Bars({ series }: { series: TrendSeries }) {
                 !show && "invisible",
               )}
             >
-              {dense ? d.getDate() : d.toLocaleDateString("en-US", { weekday: "short" })}
+              {!dense
+                ? d.toLocaleDateString("en-US", { weekday: "short" })
+                : day === 1 && n > 31
+                  ? d.toLocaleDateString("en-GB", n > 120 ? { month: "short" } : { day: "numeric", month: "short" })
+                  : day}
             </span>
           );
         })}

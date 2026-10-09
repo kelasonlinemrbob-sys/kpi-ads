@@ -1,0 +1,10 @@
+[Unit]
+Description=Sync LKBI registrations into KPI Ads every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+Unit=kpiads-registrations.service
+
+[Install]
+WantedBy=timers.target

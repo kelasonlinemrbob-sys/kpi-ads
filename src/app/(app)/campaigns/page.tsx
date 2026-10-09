@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { and, asc, desc, eq, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, type SQL } from "drizzle-orm";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   CirclePauseIcon,
@@ -21,6 +22,10 @@ import { fetchCampaignPerformance } from "@/lib/campaign-performance";
 import { CAMPAIGN_PERIODS, campaignPeriod, campaignMoney, emptyCampaignMetrics, totalCampaignMetrics, derivedCampaignMetrics } from "@/lib/campaign-metrics";
 import { matchProduct } from "@/lib/ads-matching";
 import { getMetaConnectionStatus } from "@/lib/meta-connection";
+import { modelLabel } from "@/lib/ai-models";
+import { getKieApiKey } from "@/lib/kie-connection";
+import { KIE_GEMINI_MODEL } from "@/lib/kie-gemini";
+import { adsScopeFor, visibleTo } from "@/lib/ads-scope";
 import { requireUser } from "@/lib/auth";
 import { getMembers } from "@/lib/data";
 import { todayISO } from "@/lib/kpi";
@@ -43,15 +48,18 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
   const sp = await searchParams;
   const tab = sp.tab === "products" ? "products" : "ads";
   const status = sp.status && sp.status in CAMPAIGN_STATUS_LABEL ? (sp.status as keyof typeof CAMPAIGN_STATUS_LABEL) : null;
-  const owner = sp.owner === "me" ? user.id : sp.owner ? Number(sp.owner) : null;
+  // Advertisers see only their own products and campaigns; supervisors and web masters see the whole team.
+  const scope = await adsScopeFor(user);
+  const owner = scope ? user.id : sp.owner === "me" ? user.id : sp.owner ? Number(sp.owner) : null;
   const canEdit = can.editCampaigns(user.role);
   const period = campaignPeriod(sp.period, todayISO());
+  const canRunAi = can.runAiAnalysis(user.role);
 
   const where: SQL[] = [];
   if (status) where.push(eq(campaigns.status, status));
   if (owner) where.push(eq(campaigns.ownerId, owner));
 
-  const [productRows, advertisers, allProducts, accountRows, adCampaignRows, metaStatus] = await Promise.all([
+  const [productRows, advertisers, allProducts, accountRows, adCampaignRows, metaStatus, kieKey] = await Promise.all([
     db
       .select({ campaign: campaigns, ownerName: users.name, ownerAvatarId: users.avatarId })
       .from(campaigns)
@@ -63,23 +71,30 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
       .select({ campaign: campaigns, ownerName: users.name, ownerAvatarId: users.avatarId })
       .from(campaigns)
       .innerJoin(users, eq(users.id, campaigns.ownerId)),
-    db.select().from(adAccounts).where(user.role === "advertiser" ? eq(adAccounts.createdById, user.id) : undefined).orderBy(asc(adAccounts.platform), asc(adAccounts.name)),
+    // An advertiser's campaigns come from the accounts they picked and those holding their products.
+    db.select().from(adAccounts).where(scope ? inArray(adAccounts.id, [...scope.accountIds, 0]) : undefined).orderBy(asc(adAccounts.platform), asc(adAccounts.name)),
     db.select().from(adCampaigns).orderBy(asc(adCampaigns.status), asc(adCampaigns.name)),
-    getMetaConnectionStatus(user.id),
+    getMetaConnectionStatus(),
+    tab === "ads" && canRunAi ? getKieApiKey() : null,
   ]);
 
-  const accountOptions = accountRows.map(({ id, platform, name, accountId, lpvConversionAction }) => ({ id, platform, name, accountId, lpvConversionAction }));
+  // Managing accounts (and linking products to them) stays limited to the advertiser's own accounts.
+  const ownAccounts = scope ? accountRows.filter((a) => scope.ownAccountIds.has(a.id)) : accountRows;
+  const accountOptions = ownAccounts.map(({ id, platform, name, accountId, lpvConversionAction }) => ({ id, platform, name, accountId, lpvConversionAction }));
   const accountById = new Map(accountRows.map((a) => [a.id, a]));
   const productCount: Record<number, number> = {};
-  for (const { campaign: c } of allProducts) if (c.adAccountId) productCount[c.adAccountId] = (productCount[c.adAccountId] ?? 0) + 1;
+  for (const { campaign: c } of allProducts) if (c.adAccountId && (!scope || c.ownerId === user.id)) productCount[c.adAccountId] = (productCount[c.adAccountId] ?? 0) + 1;
   const accountPerformance = new Map(tab === "ads" ? await Promise.all(accountRows.filter((a) => a.platform === "meta" || a.platform === "google").map(async (a) =>
     [a.id, await fetchCampaignPerformance({ ...a, platform: a.platform as "meta" | "google" }, period.start, period.end)] as const)) : []);
   const performance = new Map([...accountPerformance].flatMap(([accountId, result]) => result.ok
     ? result.campaigns.map((c) => [`${accountId}:${c.id}`, c.metrics] as const) : []));
-  const performanceWarnings = accountRows.flatMap((a) => {
+  // Accounts failing with the same message share one line, so an expired Google token is one warning, not one per account.
+  const warningGroups = new Map<string, string[]>();
+  for (const a of accountRows) {
     const result = accountPerformance.get(a.id);
-    return !result ? [] : result.ok ? result.warnings.map((warning) => `${a.name}: ${warning}`) : [`${a.name}: ${result.error}`];
-  });
+    for (const message of !result ? [] : result.ok ? result.warnings : [result.error]) warningGroups.set(message, [...(warningGroups.get(message) ?? []), a.name]);
+  }
+  const performanceWarnings = [...warningGroups].map(([message, names]) => (names.length === 1 ? `${names[0]}: ${message}` : `${message} (${names.length} akun: ${names.join(", ")})`));
 
   // Same keyword matching as "Generate dari Ads", so this page and the daily reports always agree.
   const linkedProducts = allProducts
@@ -93,7 +108,9 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
       linkedProducts.filter((p) => p.adAccountId === c.adAccountId),
     );
     if (status && c.status !== status) return [];
-    if (owner && product?.ownerId !== owner) return [];
+    if (!visibleTo(scope, { adAccountId: c.adAccountId, ownerId: product?.ownerId ?? null })) return [];
+    // An advertiser also keeps the unmapped campaigns of their own accounts, so they can map them.
+    if (owner && product?.ownerId !== owner && !(scope && !product)) return [];
     const result = accountPerformance.get(c.adAccountId);
     const perf = result?.ok ? performance.get(`${c.adAccountId}:${c.externalId}`) ?? emptyCampaignMetrics(account.platform === "google" ? "google" : "meta", result.currency, result.lpvAvailable) : null;
     return [
@@ -117,10 +134,19 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
   });
 
   const activeAds = adRows.filter((r) => r.status === "active");
-  const totals = derivedCampaignMetrics(totalCampaignMetrics(adRows.map((r) => r.performance)));
-  const budgetCurrencies = new Set(activeAds.map((r) => r.currency));
-  const budgetCurrency = budgetCurrencies.size === 1 ? activeAds[0]?.currency ?? null : null;
-  const unmapped = adRows.filter((r) => !r.product && r.status !== "ended").length;
+  // Totals use the campaigns whose numbers loaded, so one failing account (e.g. an expired Google token)
+  // doesn't blank the whole summary; the stat says how many were left out.
+  const loadedRows = adRows.filter((r) => r.performance);
+  const failedActive = activeAds.filter((r) => !r.performance).length;
+  const failedHint = failedActive ? `Tanpa ${failedActive} campaign aktif yang gagal dimuat` : undefined;
+  const totals = derivedCampaignMetrics(totalCampaignMetrics(loadedRows.map((r) => r.performance)));
+  const lpvTotals = derivedCampaignMetrics(totalCampaignMetrics(loadedRows.filter((r) => r.performance!.landingPageViews !== null).map((r) => r.performance)));
+  const budgeted = activeAds.filter((r) => r.dailyBudget !== null && r.currency);
+  const budgetCurrencies = new Set(budgeted.map((r) => r.currency));
+  const budgetCurrency = budgetCurrencies.size === 1 ? budgeted[0]?.currency ?? null : null;
+  const budgetHint = activeAds.length > budgeted.length ? `${activeAds.length - budgeted.length} campaign aktif memakai budget ad set atau gagal dimuat` : undefined;
+  // Only campaigns that ran in the period: old paused ones don't need a product to keep the reports right.
+  const unmapped = adRows.filter((r) => !r.product && ((r.performance?.spent ?? 0) > 0 || r.status === "active")).length;
   const syncErrors = accountRows.filter((a) => a.lastSyncError);
   const lastSynced = accountRows.map((a) => a.lastSyncedAt).filter(Boolean).sort((a, b) => b!.getTime() - a!.getTime())[0];
 
@@ -154,7 +180,7 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
                 value={owner ? String(owner) : "all"}
                 options={[{ value: "all", label: "Semua pemilik" }, ...advertisers.map((a) => ({ value: String(a.id), label: a.id === user.id ? `${a.name} (Saya)` : a.name }))]}
               />
-            ) : (
+            ) : scope ? null : (
               <UrlSelect
                 param="owner"
                 label="Owner"
@@ -169,10 +195,10 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
               <AdAccountsDialog
                 accounts={accountOptions}
                 productCount={productCount}
-                deletableIds={accountRows
+                deletableIds={ownAccounts
                   .filter((a) => user.role === "supervisor" || a.createdById === user.id)
                   .map((a) => a.id)}
-                syncErrors={Object.fromEntries(syncErrors.map((a) => [a.id, a.lastSyncError!]))}
+                syncErrors={Object.fromEntries(syncErrors.filter((a) => ownAccounts.includes(a)).map((a) => [a.id, a.lastSyncError!]))}
                 metaStatus={metaStatus}
               />
             )}
@@ -197,40 +223,32 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
             <UrlSelect param="period" label="Periode metrik" value={period.key} options={CAMPAIGN_PERIODS} />
             <span className="text-xs text-muted-foreground">{period.start} – {period.end} · Zona waktu akun iklan · Data langsung dari Ads</span>
           </div>
-          <div className="mb-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mb-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
             <MiniStat title="Campaign aktif" icon={CirclePlayIcon} value={String(activeAds.length)} />
             <MiniStat
               title="Budget harian aktif"
               icon={WalletIcon}
-              value={campaignMoney(activeAds.every((r) => r.dailyBudget !== null) ? activeAds.reduce((sum, r) => sum + r.dailyBudget!, 0) : null, budgetCurrency)}
+              value={campaignMoney(budgeted.length ? budgeted.reduce((sum, r) => sum + r.dailyBudget!, 0) : null, budgetCurrency)}
+              hint={budgetHint}
             />
-            <MiniStat title="Spend periode ini" icon={CoinsIcon} value={campaignMoney(totals.spent, totals.currency)} />
-            <MiniStat title="CPLV periode ini" icon={TargetIcon} value={campaignMoney(totals.cplv, totals.currency)} />
+            <MiniStat title="Spend periode ini" icon={CoinsIcon} value={campaignMoney(totals.spent, totals.currency)} hint={failedHint} />
+            <MiniStat title="CPLV periode ini" icon={TargetIcon} value={campaignMoney(lpvTotals.cplv, lpvTotals.currency)} hint={failedHint} />
           </div>
           {(unmapped > 0 || syncErrors.length > 0 || performanceWarnings.length > 0) && (
-            <div className="mb-3 grid gap-1 text-sm text-muted-foreground">
-              {performanceWarnings.map((warning) => <p key={warning} className="flex gap-2 text-destructive" role="status"><TriangleAlertIcon className="mt-0.5 size-4 shrink-0" /><span>{warning}</span></p>)}
-              {syncErrors.map((a) => (
-                <p key={a.id} className="flex gap-2">
-                  <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
-                  <span>
-                    <span className="font-medium text-foreground">{a.name}</span> gagal disinkron — {a.lastSyncError}
-                  </span>
-                </p>
-              ))}
-              {unmapped > 0 && (
-                <p className="flex gap-2">
-                  <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-warning" />
-                  <span>
-                    {unmapped} campaign belum terpetakan ke product. Tambahkan kode product di nama campaign, atau isi kode
-                    product di tab Product.
-                  </span>
-                </p>
-              )}
-            </div>
+            <AdsWarnings
+              errors={[
+                ...performanceWarnings,
+                // Sync errors with the same cause as a metrics error above add nothing new.
+                ...syncErrors.filter((a) => !performanceWarnings.some((w) => w.includes(a.name))).map((a) => `${a.name} gagal disinkron — ${a.lastSyncError}`),
+              ]}
+              notice={unmapped > 0 ? `${unmapped} campaign aktif / tayang belum terpetakan ke product. Tambahkan kode product di nama campaign, atau isi kode product di tab Product.` : null}
+              settingsHref={can.manageAdsConnection(user.role) ? "/settings?tab=integrasi" : null}
+            />
           )}
           <AdCampaignsTable
             rows={adRows}
+            period={period.key}
+            ai={{ modelLabel: modelLabel(KIE_GEMINI_MODEL), canRun: canRunAi && kieKey !== null, needsKey: canRunAi && kieKey === null, canSetup: can.manageAdsConnection(user.role) }}
             emptyAction={
               canEdit && accountRows.length > 0 ? <SyncButton /> : null
             }
@@ -266,10 +284,33 @@ export default async function CampaignsPage({ searchParams }: { searchParams: Pr
   );
 }
 
-function MiniStat({ title, icon, value }: { title: string; icon: LucideIcon; value: string }) {
+/** Problems with the ad accounts, folded to one line each and collapsed beyond the first two. */
+function AdsWarnings({ errors, notice, settingsHref }: { errors: string[]; notice: string | null; settingsHref: string | null }) {
+  const line = (text: string, tone: "destructive" | "warning") => (
+    <p key={text} className="flex gap-2"><TriangleAlertIcon className={`mt-0.5 size-4 shrink-0 ${tone === "destructive" ? "text-destructive" : "text-warning"}`} /><span>{text}</span></p>
+  );
+  return (
+    <div className="mb-3 grid gap-1.5 rounded-xl border bg-card p-3 text-sm text-muted-foreground" role="status">
+      {errors.slice(0, 2).map((e) => line(e, "destructive"))}
+      {errors.length > 2 && (
+        <details className="group">
+          <summary className="cursor-pointer pl-6 text-xs font-medium text-foreground">Lihat {errors.length - 2} peringatan lainnya</summary>
+          <div className="mt-1.5 grid gap-1.5">{errors.slice(2).map((e) => line(e, "destructive"))}</div>
+        </details>
+      )}
+      {notice && line(notice, "warning")}
+      {errors.length > 0 && settingsHref && (
+        <Link href={settingsHref} className="pl-6 text-xs font-medium text-foreground underline underline-offset-4">Periksa koneksi di Pengaturan → Integrasi</Link>
+      )}
+    </div>
+  );
+}
+
+function MiniStat({ title, icon, value, hint }: { title: string; icon: LucideIcon; value: string; hint?: string }) {
   return (
     <Panel title={title} icon={icon}>
-      <p className="px-4 py-3 text-2xl font-medium tabular-nums">{value}</p>
+      <p className="truncate px-4 pt-3 text-lg font-medium tabular-nums sm:text-2xl" title={value}>{value}</p>
+      <p className="truncate px-4 pb-3 text-[11px] text-muted-foreground" title={hint}>{hint ?? "\u00a0"}</p>
     </Panel>
   );
 }

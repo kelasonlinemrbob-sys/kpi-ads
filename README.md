@@ -80,11 +80,63 @@ Hook rate = tonton 3 detik ÷ impression, hold rate = ThruPlay ÷ tonton 3 detik
 kolom spreadsheet, dengan kolom metrik tambahan di akhir. Data contoh: `pnpm db:seed-ads-demo`.
 Semua anggota bisa memberi tugas ke Creative (kategori Video iklan, Desain grafis/carousel, Revisi konten, Script).
 
+### Analisa AI (Gemini / Claude lewat Kie.ai)
+
+Di tampilan **Ringkasan**, supervisor dan advertiser bisa klik **Analisa dengan AI**. Server menghitung angka per iklan
+(spend, CTR, CPC, CPM, frekuensi, biaya per hasil, hook/hold rate) untuk filter dan periode yang sedang dibuka (maks. 40
+iklan dengan spend terbesar, sisanya dijumlah), lalu AI menulis status, temuan, langkah yang perlu
+dilakukan, dan keputusan per iklan (naikkan budget / pertahankan / pantau / siapkan pengganti / ganti / belum cukup data).
+AI hanya menafsirkan angka; ia tidak menghitung ulang. Target biaya per hasil dan konteks bisnis bisa diisi opsional.
+
+- **Data tambahan dari Meta** (bisa dimatikan per analisa), ditarik saat analisa dijalankan dengan token Meta pemilik akun
+  iklan (sama seperti sinkron), difilter ke iklan yang dianalisa: periode sebelumnya dengan panjang sama (per iklan dan
+  total, perubahan persen dihitung server), tren harian, serta breakdown placement, umur dan gender. Hasilnya tampil
+  sebagai perbandingan, tabel harian dan tabel breakdown, dan AI menulis tren serta temuan audience (efisien / boros /
+  tanpa hasil). Segmen dengan kurang dari 3 hasil tidak dijadikan patokan. Bagian yang gagal ditarik dicatat sebagai
+  "Data yang tidak lengkap" dan tidak ditampilkan sebagian.
+- **Model**: `AI_SUMMARY_MODEL=gemini` (default, Gemini 3.8 Flash) atau `claude` (Claude Opus 5.5). Uji langsung dengan data
+  yang sama (7 Okt 2026): keputusan per iklan identik, Gemini 0,35 kredit / 44 detik termasuk gambar, Claude 5,43 kredit
+  / 34 detik tanpa gambar. Model yang dipakai tercatat di setiap hasil.
+- **Gambar creative** (otomatis nyala untuk Gemini, mati untuk Claude; `AI_ANALYSIS_IMAGES=true/false` memaksa): gambar penuh untuk iklan
+  gambar, thumbnail 600px untuk video/carousel, maks. 6 iklan dengan spend terbesar, hanya diunduh dari CDN Meta; AI
+  menulis penilaian visual per iklan. Bila penyedia menolak gambar (HTTP 400/422), analisa diulang tanpa gambar.
+- **Matriks diagnosa** (tanpa AI, dihitung dari angka): 9 matriks 2×2 seperti Reach × Frekuensi, Frekuensi × CTR,
+  CPM × Cost per Result, CPM × CTR, Hook × Hold, Hook × CTR, CTR × LPV rate, CTR × Conversion rate, CTR × Cost per Result.
+  Garis tengah = angka acuan (CTR 0,5%, CPM Rp30.000, frekuensi harian 1,6× / retargeting 2,5×, hook 20%, hold 10%,
+  LPV rate 60%, conversion 5%, mahal = 1,2× target), reach dibagi di nilai tengah akun. Angka acuan bisa diubah di layar
+  (tersimpan di browser) dan matriks langsung digambar ulang tanpa AI. Masalah utama tiap iklan = kotak merah pertama
+  menurut urutan penayangan → creative → klik → halaman → hasil; ringkasan ini juga dikirim ke AI sebagai dasar
+  diagnosanya. Frekuensi/reach harian dan landing page view per iklan ditarik dari Meta saat analisa (satu permintaan
+  level iklan per hari per akun); iklan tanpa data itu tidak dimasukkan ke matriks yang membutuhkannya.
+- **Batasan Kie.ai** (dicek langsung 7 Oktober 2026): request dengan `tools` dibalas 503, `output_config` diabaikan,
+  gambar dibuang tanpa error, dan jawaban non-streaming kosong. Karena itu analisa memakai streaming, format JSON
+  diminta lewat system prompt lalu divalidasi zod, dan gambar tidak dikirim. Satu analisa 2 iklan memakai ±5,4 kredit
+  (±34 detik); Kie menagih sesuai token output.
+- **Analisa creative per konten** (dialog di Galeri konten) memakai **Gemini 3.8 Flash** lewat Kie.ai (endpoint Gemini
+  native). Server mengambil creative iklan dengan spend terbesar dari Meta: file video (URL CDN Meta yang ditonton
+  Gemini), gambar penuh atau kartu carousel (maks. 5), dan copy (primary text, headline, CTA). Gemini menilai hook 3
+  detik pertama, pesan, visual, copy, kaitannya dengan angka konten dibanding rata-rata semua konten periode yang sama,
+  momen penting di video (detik), saran perbaikan dan ide creative baru, plus skor 1–10 dan usulan Keterangan yang bisa
+  langsung dipakai. Bila file video tidak bisa diambil atau gagal diproses, cover video yang dinilai dan hal itu
+  dicatat. Hasil terakhir per konten terlihat oleh seluruh tim Creative; menjalankannya butuh supervisor/advertiser
+  dengan API key Kie. Kartu yang sudah dianalisa diberi tanda "AI". Uji langsung (7 Okt 2026): video 10 detik ±36
+  detik, 0,34 kredit; Gemini di Kie benar-benar membaca gambar/video, tetapi enum di `responseSchema` tidak ditegakkan
+  sehingga JSON divalidasi zod (satu kali coba ulang bila formatnya salah). Kredit yang dilaporkan Kie disimpan di kolom
+  `credits` (migrasi `0033`).
+- API key Kie.ai **tim** diisi supervisor sekali di **Pengaturan → Integrasi → Kie AI** (terenkripsi di `shared.kie.*`, dites
+  lewat endpoint saldo kredit). Supervisor, advertiser, dan creative langsung memakainya tanpa mengisi key; batas
+  `AI_ANALYSIS_DAILY_LIMIT` berlaku per orang. Migrasi `0035` menyalin key supervisor yang sudah tersimpan.
+- Analisa berjalan di latar belakang (`after()`), halaman mem-poll hasilnya, jadi tidak kena timeout nginx/Cloudflare.
+  Hasil disimpan di tabel `ai_analyses` (migrasi `0032`) dan muncul lagi saat filter yang sama dibuka.
+- Biaya: kredit Kie.ai (Opus 5.5 ≈ $1,60 / $8 per 1 juta token input / output), kira-kira ±Rp500 per analisa.
+  Batas `AI_ANALYSIS_DAILY_LIMIT` (default 30) analisa per user per 24 jam.
+- Kie.ai adalah penyedia pihak ketiga: nama iklan, nama campaign dan angka performa dikirim ke Kie.ai saat analisa.
+
 ## Pengaturan
 
 Halaman **Pengaturan** dibagi per tab: *Profil* (nama, jabatan, role & info akun), *Keamanan* (ganti password dengan
 indikator kekuatan; setelah diganti semua perangkat lain otomatis keluar, plus tombol *Keluarkan perangkat lain*),
-*Tampilan* (Terang / Gelap / Ikuti sistem), *Integrasi* (WhatsApp laporan untuk advertiser, koneksi Meta Ads) dan
+*Tampilan* (Terang / Gelap / Ikuti sistem), *Integrasi* (WhatsApp laporan untuk advertiser, koneksi Meta Ads, Kie AI untuk Analisa AI) dan
 *Aturan Laporan* (supervisor): jam batas laporan advertiser (default 15.30 WIB) dan batas isi/edit mundur (default 7 hari),
 yang langsung dipakai di form laporan, dashboard, validasi dan teks aplikasi. Reset password oleh supervisor di Team juga
 mengeluarkan sesi anggota tersebut.
@@ -190,17 +242,20 @@ src/
   2. Di tiap campaign/product, pilih akun iklannya dan isi **kode product**, mis. `SERUM`.
   3. Nama campaign di Ads Manager / Google Ads harus mengandung kode itu, mis. `[SERUM] Retargeting 30D`.
   Saat advertiser klik *Generate dari Ads*, semua campaign di akun dijumlahkan per product (kode terpanjang menang bila
-  lebih dari satu cocok). Campaign ber-spend tanpa kode ditampilkan sebagai *belum terpetakan*. Token Meta diisi supervisor
-  di **Settings → Koneksi Meta Ads** (lihat di bawah); kredensial `GOOGLE_ADS_*` diset di `.env` (lihat `.env.example`). Tanggal mengikuti zona waktu akun iklan; untuk "hari ini"
+  lebih dari satu cocok). Campaign ber-spend tanpa kode ditampilkan sebagai *belum terpetakan*. Koneksi Meta dan
+  Google Ads diisi supervisor sekali untuk seluruh tim di **Pengaturan → Integrasi** (lihat di bawah). Tanggal mengikuti zona waktu akun iklan; untuk "hari ini"
   angkanya adalah data sampai saat tombol diklik.
-- **Koneksi Meta Ads** (Settings, supervisor): tempel access token lalu *Simpan & tes*. Token divalidasi ke Meta
-  (pemilik, izin `ads_read`, masa berlaku), disimpan terenkripsi (kunci dari `AUTH_SECRET`), dan daftar akun iklan yang
-  bisa dibaca token langsung tampil dengan tombol *Tambahkan*. Panduan langkah demi langkah ada di kartu itu.
+- **Koneksi Meta / Google Ads tim** (Pengaturan → Integrasi): **supervisor** mengisi token Meta (System User) dan
+  kredensial OAuth Google Ads (sebaiknya lewat MCC) sekali untuk seluruh tim; disimpan terenkripsi di kunci `shared.*`.
+  Semua panggilan API (Generate dari Ads, Sinkron, Creative, Analisa AI) memakai koneksi ini. **Advertiser** tidak
+  mengisi kredensial: di kartu *Akun iklan … saya* mereka cukup klik *Pilih* pada akun yang bisa dibaca koneksi tim
+  (server memastikan aksesnya). Akun milik advertiser lain tampil sebagai *Dipakai*; akun yang didaftarkan supervisor
+  bisa *diambil alih* advertiser. *Lepas* hanya mengosongkan pemilik, data sinkron tetap tersimpan. Token Meta
+  divalidasi ke Meta (pemilik, izin `ads_read`, masa berlaku). Panduan langkah demi langkah ada di kartu supervisor.
   Agar tidak kedaluwarsa, pakai token **System User** (Pengaturan bisnis → Pengguna sistem → assign akun iklan +
   aplikasi → Buat token, masa berlaku *Tidak pernah*, izin `ads_read`). Token user dari Graph API Explorer (1–2 jam)
   otomatis ditukar menjadi token ±60 hari bila App ID + App Secret diisi. Aplikasi memperingatkan 14 hari sebelum token
-  kedaluwarsa. `META_ACCESS_TOKEN` di `.env` tetap dipakai sebagai cadangan. Mengganti `AUTH_SECRET` berarti token
-  harus ditempel ulang.
+  kedaluwarsa. Mengganti `AUTH_SECRET` berarti token harus ditempel ulang.
 - Saat akun Meta ditambahkan, aplikasi mengecek bahwa token bisa membaca akun itu (ID salah / belum di-assign ke
   System User langsung ditolak dengan pesan yang jelas).
 - Rincian per campaign dari hasil generate ikut disimpan saat laporan dikirim (`advertiser_report_item_campaigns`) dan

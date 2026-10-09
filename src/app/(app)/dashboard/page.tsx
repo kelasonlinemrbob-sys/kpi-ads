@@ -24,19 +24,18 @@ import { getActivities, getEntries, getMembers, getMetrics, getScorecards, getTe
 import { toFeed } from "@/lib/feed";
 import {
   aggregate,
-  comparableRange,
   dailySeries,
   datesBetween,
   pctDelta,
-  periodAsOf,
-  periodRange,
+  previousWindow,
   todayISO,
   workingDays,
+  type DateWindow,
   type Entry,
 } from "@/lib/kpi";
 import { advertiserReportDeadlinePassed, formatCutoff, isAdvertiserReportDay } from "@/lib/reporting";
 import { getReportRules } from "@/lib/report-rules";
-import { resolvePeriod } from "@/lib/period";
+import { MAX_RANGE_DAYS, resolveDateWindow, ROLLING_RANGES } from "@/lib/period";
 import { hasSecondRole, memberRoles, reportsMondayToFriday, roleSlots } from "@/lib/member-roles";
 import { TabLink } from "../campaigns/ad-campaigns-table";
 import { ROLE_LABEL } from "@/lib/roles";
@@ -52,7 +51,7 @@ import {
 import { ActivityFeed } from "@/components/dashboard/activity-feed";
 import { KpiBreakdownTable } from "@/components/dashboard/kpi-breakdown";
 import { Panel, PageHeader } from "@/components/dashboard/panel";
-import { PeriodSelect } from "@/components/dashboard/period-select";
+import { DateRangeFilter } from "@/components/dashboard/date-range-filter";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { TeamTable, type TeamRow } from "@/components/dashboard/team-table";
 import { TrendChart, type TrendSeries } from "@/components/dashboard/trend-chart";
@@ -87,7 +86,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const user = await requireUser();
   if (user.role === "cso") redirect("/leads");
   const sp = await searchParams;
-  const { period, options } = resolvePeriod(sp.period);
+  const dates = resolveDateWindow(sp);
+  const { window, compareLabel } = dates;
+  // Scorecard, leaderboard and export are monthly: they open on the month of the window's last day.
+  const period = window.month;
   const personal = user.role !== "supervisor" || sp.view === "ads";
   const firstName = user.name.split(" ")[0];
 
@@ -97,12 +99,20 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         title={<>Hello, {firstName} 👋</>}
         description={
           personal
-            ? "Pantau target, performa produk, dan laporan harianmu bulan ini."
+            ? "Pantau target, performa produk, dan laporan harianmu pada periode ini."
             : "Pantau performa dan laporan tim, atau buka Iklan Saya untuk iklan pribadi."
         }
         actions={
           <>
-            <PeriodSelect value={period} options={options} />
+            <DateRangeFilter
+              label={dates.label}
+              selection={dates.selection}
+              months={dates.months}
+              rolling={ROLLING_RANGES}
+              today={dates.today}
+              maxDays={MAX_RANGE_DAYS}
+              defaultRange={{ from: window.start, to: window.asOf }}
+            />
             {personal && <Button asChild className="h-8"><Link href="/reports/new"><ClipboardPenIcon /> Isi laporan</Link></Button>}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -128,8 +138,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       />
       {user.role === "supervisor" && (
         <div className="mb-3 inline-flex rounded-lg bg-muted p-1">
-          <TabLink href={`/dashboard?period=${period}`} active={!personal}>Dashboard Tim</TabLink>
-          <TabLink href={`/dashboard?view=ads&period=${period}`} active={personal}>Iklan Saya</TabLink>
+          <TabLink href={`/dashboard?${dates.query}`} active={!personal}>Dashboard Tim</TabLink>
+          <TabLink href={`/dashboard?view=ads&${dates.query}`} active={personal}>Iklan Saya</TabLink>
         </div>
       )}
       {personal && user.role === "supervisor" && (
@@ -140,7 +150,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           <Button asChild variant="outline" size="sm"><Link href={`/scorecard?user=${user.id}&period=${period}`}>KPI Saya</Link></Button>
         </div>
       )}
-      {personal ? <MemberDashboard user={user} period={period} /> : <SupervisorDashboard user={user} period={period} />}
+      {personal ? (
+        <MemberDashboard user={user} window={window} compareLabel={compareLabel} />
+      ) : (
+        <SupervisorDashboard user={user} window={window} compareLabel={compareLabel} />
+      )}
     </>
   );
 }
@@ -159,18 +173,17 @@ function metricTrend(metric: KpiMetric, metrics: KpiMetric[], entries: Entry[], 
   };
 }
 
-async function SupervisorDashboard({ user, period }: { user: SessionUser; period: string }) {
-  const asOf = periodAsOf(period);
-  const { start } = periodRange(period);
-  const prev = comparableRange(period, asOf);
+async function SupervisorDashboard({ user, window, compareLabel }: { user: SessionUser; window: DateWindow; compareLabel: string }) {
+  const { start, asOf } = window;
+  const prev = previousWindow(window);
   const dates = datesBetween(start, asOf);
   const members = await getMembers();
   const [metrics, scorecards, entries, prevEntries, teamSeries, feed, todayReports] = await Promise.all([
     getMetrics(),
-    getScorecards(period, members),
+    getScorecards(window, members),
     getEntries(start, asOf, members.map((m) => m.id)),
-    getEntries(prev.start, prev.end, members.map((m) => m.id)),
-    getTeamScoreSeries(period, members),
+    getEntries(prev.start, prev.asOf, members.map((m) => m.id)),
+    getTeamScoreSeries(window, members),
     getActivities(user),
     db.select({ userId: dailyReports.userId }).from(dailyReports).where(eq(dailyReports.date, todayISO())),
   ]);
@@ -222,6 +235,7 @@ async function SupervisorDashboard({ user, period }: { user: SessionUser; period
             value={teamScore === null ? "–" : `${formatNumber(teamScore, 1)}`}
             delta={pctDelta(teamScore, prevTeamScore)}
             series={teamSeries.map((p) => p.value)}
+            deltaLabel={compareLabel}
           />
           <StatCard
             title="Total Leads"
@@ -229,6 +243,7 @@ async function SupervisorDashboard({ user, period }: { user: SessionUser; period
             value={leads.total === null ? "–" : formatNumber(leads.total)}
             delta={leads.delta}
             series={leads.points.map((p) => p.value)}
+            deltaLabel={compareLabel}
           />
           <StatCard
             title="Team ROAS"
@@ -236,23 +251,23 @@ async function SupervisorDashboard({ user, period }: { user: SessionUser; period
             value={roas.total === null ? "–" : formatValue(roas.total, "ratio")}
             delta={roas.delta}
             series={roas.points.map((p) => p.value)}
+            deltaLabel={compareLabel}
           />
         </div>
-        <TrendChart title="Performance Trend" series={trend} />
+        <TrendChart title="Performance Trend" series={trend} deltaLabel={compareLabel} />
       </div>
       <ActivityFeed items={toFeed(feed)} className="xl:h-0 xl:min-h-full" />
       <div className="min-w-0 xl:col-span-2">
-        <TeamTable rows={rows} period={period} cutoff={formatCutoff(rules.cutoff)} />
+        <TeamTable rows={rows} period={window.month} cutoff={formatCutoff(rules.cutoff)} />
       </div>
     </div>
   );
 }
 
-async function MemberDashboard({ user, period }: { user: SessionUser; period: string }) {
+async function MemberDashboard({ user, window, compareLabel }: { user: SessionUser; window: DateWindow; compareLabel: string }) {
   const role = (user.role === "supervisor" ? "advertiser" : user.role) as Exclude<Role, "supervisor">;
-  const asOf = periodAsOf(period);
-  const { start } = periodRange(period);
-  const prev = comparableRange(period, asOf);
+  const { start, asOf } = window;
+  const prev = previousWindow(window);
   const dates = datesBetween(start, asOf);
   const me = {
     id: user.id,
@@ -266,10 +281,10 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
   };
   const [metrics, [card], entries, prevEntries, scoreSeries, feed, [todayReport], myTasks] = await Promise.all([
     getMetrics(),
-    getScorecards(period, [me]),
+    getScorecards(window, [me]),
     getEntries(start, asOf, [user.id]),
-    getEntries(prev.start, prev.end, [user.id]),
-    getTeamScoreSeries(period, [me]),
+    getEntries(prev.start, prev.asOf, [user.id]),
+    getTeamScoreSeries(window, [me]),
     getActivities(user, 60, true),
     db
       .select({ id: dailyReports.id, status: dailyReports.status })
@@ -292,7 +307,7 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
     metric: byKey.get(key)!,
     trend: metricTrend(byKey.get(key)!, metrics, entries, prevEntries, dates),
   }));
-  const isCurrent = period === todayISO().slice(0, 7);
+  const isCurrent = window.start <= todayISO() && todayISO() <= window.end;
   const reportRequiredToday = !reportsMondayToFriday(user) || isAdvertiserReportDay(todayISO());
   const rules = await getReportRules();
   const cut = formatCutoff(rules.cutoff);
@@ -327,6 +342,7 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
             value={card?.score == null ? "–" : formatNumber(card.score, 1)}
             delta={pctDelta(card?.score ?? null, card?.prevScore ?? null)}
             series={scoreSeries.map((p) => p.value)}
+            deltaLabel={compareLabel}
           />
           {headline.map(({ icon, metric, trend }) => (
             <StatCard
@@ -337,6 +353,7 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
               delta={trend.delta}
               higherIsBetter={metric.higherIsBetter}
               series={trend.points.map((p) => p.value)}
+              deltaLabel={compareLabel}
             />
           ))}
         </div>
@@ -347,6 +364,7 @@ async function MemberDashboard({ user, period }: { user: SessionUser; period: st
             ...(roles.length > 1 ? { label: `${m.name} · ${ROLE_LABEL[m.role]}` } : {}),
           }))}
           defaultKey={HEADLINE[role][0]!.key}
+          deltaLabel={compareLabel}
         />
       </div>
       <ActivityFeed items={toFeed(feed)} className="xl:h-0 xl:min-h-full" />

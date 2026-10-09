@@ -7,7 +7,6 @@ import { z } from "zod";
 import { db } from "@/db";
 import { requireRole } from "@/lib/auth";
 import { leadErrorMessage, saveOrderForm, updateOrderLead } from "@/lib/order-leads";
-import { leadCommerceSchema, type LeadCommerce } from "@/lib/order-form-config";
 import { orderLeads } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { FIELD_LABELS, LEAD_STATUSES } from "@/lib/order-form-input";
@@ -35,13 +34,7 @@ export async function updateLeadAction(_:FormState,form:FormData):Promise<FormSt
   const actor=await requireRole("supervisor","advertiser","cso");
   const parsed=z.object({id:z.coerce.number().int().positive(),status:z.enum(LEAD_STATUSES),notes:z.string().trim().max(4000),assigneeId:z.coerce.number().int().positive().optional()}).safeParse({id:form.get("id"),status:form.get("status"),notes:form.get("notes")??"",assigneeId:form.get("assigneeId")||undefined});
   if(!parsed.success)return {error:"Status, CSO atau catatan tidak valid."};
-  let commerce:LeadCommerce|undefined;
-  if(form.has("paymentStatus")){
-    const when=String(form.get("followUpAt")||"");
-    const result=leadCommerceSchema.safeParse({paymentStatus:form.get("paymentStatus"),revenue:Number(form.get("revenue")),followUpStep:Number(form.get("followUpStep")),followUpAt:when?`${when}:00+07:00`:null});
-    if(!result.success)return {error:"Periksa pembayaran, omzet dan jadwal follow-up."};commerce=result.data;
-  }
-  try{await db.transaction(tx=>updateOrderLead(tx,actor,parsed.data.id,parsed.data.status,parsed.data.notes,parsed.data.assigneeId,commerce));}
+  try{await db.transaction(tx=>updateOrderLead(tx,actor,parsed.data.id,parsed.data.status,parsed.data.notes,parsed.data.assigneeId));}
   catch(error){return {error:leadErrorMessage(error)};}
   revalidatePath("/leads");revalidatePath(`/leads/${parsed.data.id}`);return {ok:true,message:"Lead diperbarui."};
 }

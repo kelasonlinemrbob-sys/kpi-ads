@@ -28,7 +28,7 @@ const expiryText = ({ expiresAt, expiryKnown }: { expiresAt: string | null; expi
 
 export async function saveMetaConnectionAction(_: FormState, formData: FormData): Promise<FormState> {
   const user = await requireUser();
-  if (!can.runAds(user.role)) return { error: "Kamu tidak punya akses untuk mengubah koneksi Meta Ads." };
+  if (!can.manageAdsConnection(user.role)) return { error: "Koneksi Meta Ads tim hanya bisa diubah supervisor." };
   const parsed = schema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };
 
@@ -49,7 +49,7 @@ export async function saveMetaConnectionAction(_: FormState, formData: FormData)
 
 export async function testMetaConnectionAction() {
   const user = await requireUser();
-  if (!can.editCampaigns(user.role)) return { ok: false as const, error: "Kamu tidak punya akses ke koneksi Meta Ads." };
+  if (!can.manageAdsConnection(user.role)) return { ok: false as const, error: "Koneksi Meta Ads tim hanya bisa dites supervisor." };
   const res = await testMetaConnection(user.id);
   revalidatePath("/settings");
   revalidatePath("/campaigns");
@@ -58,7 +58,7 @@ export async function testMetaConnectionAction() {
 
 export async function removeMetaConnectionAction() {
   const user = await requireUser();
-  if (!can.runAds(user.role)) return { error: "Kamu tidak punya akses untuk memutus koneksi Meta Ads." };
+  if (!can.manageAdsConnection(user.role)) return { error: "Koneksi Meta Ads tim hanya bisa diputus supervisor." };
   await removeMetaConnection(user.id);
   revalidatePath("/settings");
   revalidatePath("/campaigns");

@@ -7,6 +7,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { users, type Role, type User } from "@/db/schema";
+import { homePath, RESTRICTED_HOME } from "@/lib/roles";
 
 export const SESSION_COOKIE = "kpi_session";
 
@@ -72,15 +73,19 @@ export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
   return rest;
 });
 
-export async function requireUser(allowCso = false) {
+/**
+ * The signed-in user. Roles limited to one area (CSO → Leads, Creative → Creative) are sent back to it
+ * unless the page or action opts in with `allowRestricted` (and then checks the role itself).
+ */
+export async function requireUser(allowRestricted = false) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
-  if (user.role === "cso" && !allowCso) redirect("/leads");
+  if (RESTRICTED_HOME[user.role] && !allowRestricted) redirect(RESTRICTED_HOME[user.role]!);
   return user;
 }
 
 export async function requireRole(...roles: Role[]) {
   const user = await requireUser(true);
-  if (!roles.includes(user.role)) redirect("/dashboard");
+  if (!roles.includes(user.role)) redirect(homePath(user.role));
   return user;
 }

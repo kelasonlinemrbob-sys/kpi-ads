@@ -29,8 +29,26 @@ export function rolesLabel(m: { role: Role; advertiserLevel?: AdvertiserLevel | 
 export const isSeniorAdvertiser = (user: { role: Role; advertiserLevel?: AdvertiserLevel | null }) =>
   user.role === "advertiser" && user.advertiserLevel === "senior";
 
+/**
+ * Roles limited to one area of the app (plus Pengaturan): CSO works only in Leads, Creative only in the
+ * Creative page. Every other page sends them back to this home.
+ */
+export const RESTRICTED_HOME: Partial<Record<Role, string>> = { cso: "/leads", creative: "/creatives" };
+/** Where a role lands after signing in and when a page isn't theirs. */
+export const homePath = (role: Role) => RESTRICTED_HOME[role] ?? "/dashboard";
+
+/**
+ * Performa SEO, Search Console websites, Keyword Planner and the SEO AI analysis: supervisors, SEO
+ * specialists and web masters, including members holding SEO or Web Master as their second role
+ * (e.g. Advertiser + SEO Specialist).
+ */
+export function canViewSeo(m: { role: Role; secondaryRole?: Role | null }) {
+  if (can.viewSearchConsole(m.role)) return true;
+  return !RESTRICTED_HOME[m.role] && (m.secondaryRole === "seo" || m.secondaryRole === "webmaster");
+}
+
 /** Roles whose members submit daily KPI reports. */
-export const MEMBER_ROLES: Exclude<Role, "supervisor">[] = ["advertiser", "webmaster", "seo", "creative"];
+export const MEMBER_ROLES: Exclude<Role, "supervisor">[] = ["advertiser", "webmaster", "seo"];
 
 export const ROLE_BADGE: Record<Role, string> = {
   supervisor: "bg-primary/10 text-foreground border-primary/15",
@@ -42,13 +60,18 @@ export const ROLE_BADGE: Record<Role, string> = {
 };
 
 export const can = {
+  viewSearchConsole: (r: Role) => r === "supervisor" || r === "seo" || r === "webmaster",
   manageTeam: (r: Role) => r === "supervisor",
   manageTargets: (r: Role) => r === "supervisor",
   reviewReports: (r: Role) => r === "supervisor",
-  submitReports: (r: Role) => r !== "cso" && ROLES.includes(r),
+  submitReports: (r: Role) => !RESTRICTED_HOME[r] && ROLES.includes(r),
   runAds: (r: Role) => r === "supervisor" || r === "advertiser",
   viewCampaigns: (r: Role) => r === "supervisor" || r === "advertiser" || r === "webmaster",
   editCampaigns: (r: Role) => r === "supervisor" || r === "advertiser",
+  /** Meta / Google Ads credentials are shared by the team and managed by supervisors. */
+  manageAdsConnection: (r: Role) => r === "supervisor",
+  /** Run Analisa AI / Analisa creative with the team's Kie.ai key (managed by supervisors). */
+  runAiAnalysis: (r: Role) => r === "supervisor" || r === "advertiser" || r === "creative",
   viewAllMembers: (r: Role) => r === "supervisor",
   /** Creative page: ad contents pulled from Meta with their performance. */
   viewCreatives: (r: Role) => r === "supervisor" || r === "advertiser" || r === "creative",

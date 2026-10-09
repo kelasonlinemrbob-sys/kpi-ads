@@ -1,6 +1,7 @@
 import { readTracking } from "./order-form-config";
 /** Executed on the landing page, never on the authenticated application origin. */
-export function buildOrderEmbed(url:string, config:unknown) {
+export function buildOrderEmbed(url:string, config:unknown, maxWidth=600) {
+ const width=Number.isInteger(maxWidth)&&maxWidth>=320&&maxWidth<=960?maxWidth:600;
  const tracking=readTracking(config);
  return `(()=>{
  const s=document.currentScript;if(!s)return;
@@ -8,7 +9,7 @@ export function buildOrderEmbed(url:string, config:unknown) {
  const parentOrigin=location.origin;if(!/^https?:$/.test(location.protocol))return;
  for(const k of ['utm_source','utm_medium','utm_campaign','utm_content','utm_term','gclid','fbclid','ttclid']){const v=new URLSearchParams(location.search).get(k);if(v)u.searchParams.set(k,v)}
  u.searchParams.set('embed_origin',parentOrigin);
- const f=document.createElement('iframe');f.src=u.href;f.title='Form pendaftaran';f.style='width:100%;max-width:600px;height:760px;border:0;display:block;margin:auto';f.setAttribute('referrerpolicy','no-referrer');f.setAttribute('loading','lazy');s.insertAdjacentElement('afterend',f);
+ const f=document.createElement('iframe');f.src=u.href;f.title='Form pendaftaran';f.style='width:100%;max-width:${width}px;height:760px;border:0;display:block;margin:auto';f.setAttribute('referrerpolicy','no-referrer');f.setAttribute('loading','lazy');s.insertAdjacentElement('afterend',f);
  const seen=new Set();
  const script=(src)=>{if([...document.scripts].some(x=>x.src===src))return;const el=document.createElement('script');el.async=true;el.src=src;document.head.appendChild(el)};
  function track(reference,meta){

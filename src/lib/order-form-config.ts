@@ -3,10 +3,29 @@ import { z } from "zod";
 const placeholder = z.string().trim().min(1,"Placeholder wajib diisi.").max(80);
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Gunakan warna hex yang valid.");
 const benefit = z.string().trim().min(1,"Teks keunggulan wajib diisi.").max(20);
-export const FORM_FONTS = { sans:"Modern", rounded:"Bulat", serif:"Klasik (serif)", mono:"Monospace" } as const;
+export const FORM_FONTS = {
+  sans:"DM Sans (modern)", inter:"Inter", jakarta:"Plus Jakarta Sans", poppins:"Poppins", montserrat:"Montserrat", nunito:"Nunito (bulat)",
+  rounded:"Bulat sistem", playfair:"Playfair Display (elegan)", lora:"Lora (serif)", serif:"Klasik sistem (serif)", mono:"Monospace",
+} as const;
 export const FORM_RADII = { none:"Kotak", sm:"Kecil", md:"Sedang", lg:"Besar", full:"Pil" } as const;
 export const FIELD_STYLES = { filled:"Terisi", outline:"Garis", underline:"Garis bawah" } as const;
+export const BUTTON_STYLES = { solid:"Penuh", outline:"Garis", soft:"Lembut", gradient:"Gradasi" } as const;
+export const FORM_WIDTHS = { narrow:"Ramping · 480px", normal:"Normal · 600px", wide:"Lebar · 720px" } as const;
+export const FORM_WIDTH_PX = { narrow:480, normal:600, wide:720 } as const;
+const hexOrAuto = hex.nullable().default(null);
+/** Only https images; quotes, spaces and brackets are refused so the value is always a plain URL. */
+const imageUrl = z.string().trim().max(500).refine(v=>v===""||(/^https:\/\/[^\s"'<>()\\]+$/.test(v)&&URL.canParse(v)),"Gunakan URL gambar https yang valid.").default("");
 const keys = <T extends object>(value:T) => Object.keys(value) as [keyof T & string, ...(keyof T & string)[]];
+/** Every visual token with the value that keeps the original look. A preset starts from these. */
+export const THEME_TOKEN_DEFAULTS = {
+  buttonColor:"#27ae60", backgroundColor:"#ffffff", textColor:"#0f172a", pageColor:"#f8fafc" as string,
+  font:"sans", radius:"md", fieldStyle:"filled", buttonStyle:"solid",
+  headingColor:null, mutedColor:null, borderColor:null, fieldBgColor:null, fieldBorderColor:null, buttonTextColor:null, buttonColorTo:null, benefitsBgColor:null, benefitsTextColor:null,
+  pageStyle:"solid", pageGradientTo:"#e0f2fe", pageGradientAngle:135,
+  titleSize:"md", titleWeight:"semibold", textSize:"md",
+  width:"normal", padding:"normal", shadow:"sm", border:"thin", fieldGap:"normal", fieldRadius:null, buttonRadius:null,
+  buttonSize:"md", buttonShadow:false,
+} as const;
 /** Visual tokens a preset sets in one click. Text, labels and placeholders stay untouched. */
 export const FORM_THEMES = {
   whatsapp:{label:"Hijau WhatsApp",buttonColor:"#27ae60",backgroundColor:"#ffffff",textColor:"#0f172a",pageColor:"#f8fafc",font:"sans",radius:"md",fieldStyle:"filled",buttonStyle:"solid"},
@@ -15,13 +34,17 @@ export const FORM_THEMES = {
   blush:{label:"Lembut pink",buttonColor:"#db2777",backgroundColor:"#fff7fb",textColor:"#3f0d24",pageColor:"#fdf2f8",font:"rounded",radius:"full",fieldStyle:"filled",buttonStyle:"solid"},
   earth:{label:"Hangat natural",buttonColor:"#b45309",backgroundColor:"#fffbeb",textColor:"#292524",pageColor:"#f5f5f4",font:"serif",radius:"sm",fieldStyle:"underline",buttonStyle:"solid"},
   mono:{label:"Minimal hitam",buttonColor:"#111827",backgroundColor:"#ffffff",textColor:"#111827",pageColor:"#ffffff",font:"sans",radius:"none",fieldStyle:"outline",buttonStyle:"outline"},
+  violet:{label:"Ungu modern",buttonColor:"#7c3aed",buttonColorTo:"#db2777",backgroundColor:"#ffffff",textColor:"#1e1b4b",pageColor:"#f5f3ff",font:"jakarta",radius:"lg",fieldStyle:"outline",buttonStyle:"gradient",titleWeight:"bold",shadow:"md",border:"none",buttonShadow:true},
+  teal:{label:"Toska segar",buttonColor:"#0d9488",backgroundColor:"#f0fdfa",textColor:"#134e4a",pageColor:"#ccfbf1",font:"nunito",radius:"lg",fieldStyle:"filled",buttonStyle:"solid",fieldBgColor:"#ffffff",titleWeight:"bold"},
+  promo:{label:"Merah promo",buttonColor:"#dc2626",backgroundColor:"#ffffff",textColor:"#111827",pageColor:"#fef2f2",font:"montserrat",radius:"sm",fieldStyle:"outline",buttonStyle:"solid",headingColor:"#b91c1c",titleSize:"lg",titleWeight:"extrabold",buttonSize:"lg",buttonShadow:true,benefitsBgColor:"#fee2e2",benefitsTextColor:"#991b1b"},
+  sunset:{label:"Senja gradasi",buttonColor:"#ea580c",buttonColorTo:"#db2777",backgroundColor:"#ffffff",textColor:"#1f2937",pageColor:"#fed7aa",pageStyle:"gradient",pageGradientTo:"#fbcfe8",pageGradientAngle:135,font:"poppins",radius:"lg",fieldStyle:"filled",buttonStyle:"gradient",shadow:"lg",border:"none",titleWeight:"bold"},
 } as const;
 export type FormThemeId = keyof typeof FORM_THEMES;
 export const appearanceSchema = z.object({
   theme: z.enum([...keys(FORM_THEMES),"custom"]).default("whatsapp"),
   buttonText: z.string().trim().min(3,"Teks tombol minimal 3 karakter.").max(60).default("Tanya-tanya via WhatsApp"),
   buttonColor: hex.default("#27ae60"),
-  buttonStyle: z.enum(["solid","outline"]).default("solid"),
+  buttonStyle: z.enum(keys(BUTTON_STYLES)).default("solid"),
   showButtonIcon: z.boolean().default(true),
   backgroundColor: hex.default("#ffffff"),
   textColor: hex.default("#0f172a"),
@@ -38,9 +61,52 @@ export const appearanceSchema = z.object({
   benefits: z.tuple([benefit,benefit,benefit]).default(["Mudah","Cepat","Aman"]),
   note: z.string().trim().max(160).default("Data disimpan sebelum Anda diarahkan ke WhatsApp."),
   placeholders: z.object({name:placeholder.default("Nama Anda"),phone:placeholder.default("No. WhatsApp Anda"),email:placeholder.default("Email Anda"),city:placeholder.default("Kota Asal")}).default({name:"Nama Anda",phone:"No. WhatsApp Anda",email:"Email Anda",city:"Kota Asal"}),
+  // Detailed colours: null = derived from the main colours (the original look).
+  headingColor: hexOrAuto,
+  mutedColor: hexOrAuto,
+  borderColor: hexOrAuto,
+  fieldBgColor: hexOrAuto,
+  fieldBorderColor: hexOrAuto,
+  buttonTextColor: hexOrAuto,
+  /** End colour of the gradient button; null = a darker shade of the button colour. */
+  buttonColorTo: hexOrAuto,
+  benefitsBgColor: hexOrAuto,
+  benefitsTextColor: hexOrAuto,
+  // Page background behind the form.
+  pageStyle: z.enum(["solid","gradient"]).default("solid"),
+  pageGradientTo: hex.default("#e0f2fe"),
+  pageGradientAngle: z.number().int().min(0).max(360).default(135),
+  // Typography.
+  titleSize: z.enum(["sm","md","lg","xl"]).default("md"),
+  titleWeight: z.enum(["semibold","bold","extrabold"]).default("semibold"),
+  textSize: z.enum(["sm","md","lg"]).default("md"),
+  // Shape and spacing.
+  width: z.enum(keys(FORM_WIDTHS)).default("normal"),
+  padding: z.enum(["compact","normal","spacious"]).default("normal"),
+  shadow: z.enum(["none","sm","md","lg"]).default("sm"),
+  border: z.enum(["none","thin","thick"]).default("thin"),
+  fieldGap: z.enum(["compact","normal","relaxed"]).default("normal"),
+  /** null = same as the card corners (`radius`). */
+  fieldRadius: z.enum(keys(FORM_RADII)).nullable().default(null),
+  buttonRadius: z.enum(keys(FORM_RADII)).nullable().default(null),
+  buttonSize: z.enum(["md","lg"]).default("md"),
+  buttonShadow: z.boolean().default(false),
+  // Header.
+  logoUrl: imageUrl,
+  logoSize: z.enum(["sm","md","lg"]).default("md"),
+  bannerUrl: imageUrl,
+  titleDivider: z.boolean().default(true),
+  benefitsPosition: z.enum(["top","bottom"]).default("top"),
+  benefitsIcons: z.boolean().default(true),
 });
 export type FormAppearance = z.infer<typeof appearanceSchema>;
 export const DEFAULT_APPEARANCE = appearanceSchema.parse({});
+export const THEME_TOKEN_KEYS = Object.keys(THEME_TOKEN_DEFAULTS) as (keyof typeof THEME_TOKEN_DEFAULTS)[];
+/** A preset over the defaults of every visual token, so nothing from the previous theme lingers. */
+export function applyFormTheme(appearance:FormAppearance, id:FormThemeId):FormAppearance {
+  const {label:_label,...tokens}=FORM_THEMES[id];
+  return {...appearance,...THEME_TOKEN_DEFAULTS,...tokens,theme:id} as FormAppearance;
+}
 const ids = (pattern:RegExp) => z.array(z.string().trim().regex(pattern,"ID tracking tidak valid.")).max(5).refine(values=>new Set(values).size===values.length,"ID tracking tidak boleh duplikat.");
 export const trackingSchema = z.object({
   metaPixelIds: ids(/^\d{5,25}$/).default([]),
@@ -59,8 +125,8 @@ const luminance=(hex:string)=>{
 export function buttonForeground(hex:string) { return luminance(hex)>.179?"#111827":"#ffffff"; }
 /** WCAG contrast ratio, 1–21. */
 export function contrastRatio(a:string,b:string) { const [x,y]=[luminance(a),luminance(b)].sort((m,n)=>n-m); return (x+.05)/(y+.05); }
-export const PAYMENT_STATUSES=["unpaid","partial","paid","refunded"] as const;
-export const PAYMENT_LABEL={unpaid:"Belum bayar",partial:"DP / sebagian",paid:"Lunas",refunded:"Dikembalikan"};
+import { PAYMENT_STATUSES } from "./order-form-constants";
+export { PAYMENT_STATUSES, PAYMENT_LABEL } from "./order-form-constants";
 export const leadCommerceSchema=z.object({
   paymentStatus:z.enum(PAYMENT_STATUSES),
   revenue:z.number().int().min(0).max(1_000_000_000_000),

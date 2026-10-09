@@ -1,4 +1,4 @@
-import { webmasterSummary } from "@/lib/webmaster-report";
+import { webmasterSummary } from "@/lib/webmaster-constants";
 import type { WebmasterTaskSnapshot } from "@/db/schema";
 import { formatNumber } from "@/lib/utils";
 

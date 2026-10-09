@@ -1,10 +1,10 @@
 import { z } from "zod";
 import type { Task, WebmasterTaskSnapshot } from "@/db/schema";
-import { TASK_CATEGORIES, allowedStatuses, type TaskPerson } from "@/lib/task-rules";
+import { allowedStatuses, type TaskPerson } from "@/lib/task-rules";
 import { parseISODate, toISODate } from "@/lib/utils";
 
-export const WEBMASTER_CATEGORIES = TASK_CATEGORIES.filter((c) => !c.roles.length || c.roles.includes("webmaster"));
-export const WEBMASTER_STATUS_LABEL = { todo: "Belum dikerjakan", in_progress: "Sedang dikerjakan", review: "Menunggu review", done: "Selesai (Done)" };
+import { WEBMASTER_CATEGORIES } from "./webmaster-constants";
+export { WEBMASTER_CATEGORIES, WEBMASTER_STATUS_LABEL, webmasterSummary } from "./webmaster-constants";
 const status = z.enum(["todo", "in_progress", "review", "done"]);
 const validDate = z.string().refine((v) => !v || /^\d{4}-\d{2}-\d{2}$/.test(v) && toISODate(parseISODate(v)) === v, "Tanggal tenggat tidak valid.");
 export const webmasterItemsSchema = z.array(z.object({
@@ -46,9 +46,3 @@ export function webmasterStatusError(actor: TaskPerson, task: Pick<Task, "assign
   return null;
 }
 
-export function webmasterSummary(items: Pick<WebmasterTaskSnapshot, "status" | "minutesSpent">[]) {
-  const done = items.filter((i) => i.status === "done").length;
-  return { total: items.length, done, review: items.filter((i) => i.status === "review").length,
-    inProgress: items.filter((i) => i.status === "in_progress").length,
-    minutes: items.reduce((sum, i) => sum + i.minutesSpent, 0), completion: items.length ? done / items.length * 100 : null };
-}

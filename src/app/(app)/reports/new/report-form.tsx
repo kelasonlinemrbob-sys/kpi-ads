@@ -16,6 +16,15 @@ import type { WebmasterTaskOption } from "@/lib/webmaster-report";
 import { WebmasterTasksEditor } from "./webmaster-tasks-editor";
 import { SeoDailyTargets } from "@/components/seo-daily-targets";
 import { SEO_REPORT_KEYS, isSeoReportKey, seoValueError, type SeoDailyTarget } from "@/lib/seo-report";
+import type { SeoReportFigures } from "@/lib/search-console";
+import { SeoSearchConsoleFill } from "./seo-search-console-fill";
+
+/** Report fields Search Console fills on the SEO report. */
+const FROM_SEARCH_CONSOLE: Record<string, (f: SeoReportFigures) => number> = {
+  seo_clicks: (f) => f.clicks,
+  seo_impressions: (f) => f.impressions,
+  top10_keywords: (f) => f.top10,
+};
 
 type MetricField = {
   key: string;
@@ -57,19 +66,32 @@ export function ReportForm({
   const inputs = metrics.filter((m) => m.aggregation !== "ratio" && m.key !== "task_completion");
   const seo = role === "seo";
   const webmaster = role === "webmaster";
-  const primaryInputs = seo ? SEO_REPORT_KEYS.flatMap((key) => inputs.filter((m) => m.key === key)) : webmaster ? [] : inputs;
+  // SEO: the Search Console figures first (right under their button), then what the member fills in.
+  const primaryInputs = seo ? (["seo_clicks", "seo_impressions", "seo_score", "articles"] as const).flatMap((key) => inputs.filter((m) => m.key === key)) : webmaster ? [] : inputs;
   const extraInputs = seo ? inputs.filter((m) => !isSeoReportKey(m.key)) : webmaster ? inputs : [];
   const derived = metrics.filter((m) => m.aggregation === "ratio");
   const [values, setValues] = React.useState<Record<string, string>>(() =>
     Object.fromEntries(inputs.map((m) => [m.key, m.value === null ? "" : String(m.value)])),
   );
   const locked = existing?.status === "approved";
+  const [summary, setSummary] = React.useState(existing?.summary ?? "");
+  const [fromSearchConsole, setFromSearchConsole] = React.useState<Set<string>>(() => new Set());
+  const fillFromSearchConsole = (f: SeoReportFigures) => {
+    const keys = Object.keys(FROM_SEARCH_CONSOLE).filter((k) => inputs.some((m) => m.key === k));
+    setValues((v) => ({ ...v, ...Object.fromEntries(keys.map((k) => [k, String(FROM_SEARCH_CONSOLE[k]!(f))])) }));
+    setFromSearchConsole(new Set(keys));
+    const sites = f.sites.map((s) => s.siteUrl.replace(/^sc-domain:/, "").replace(/^https?:\/\//, "").replace(/\/$/, "")).join(", ");
+    const line = `Search Console ${f.date}: ${f.clicks.toLocaleString("id-ID")} klik, ${f.impressions.toLocaleString("id-ID")} impresi organik, ${f.top10.toLocaleString("id-ID")} kata kunci di 10 besar (${sites}).`;
+    // A summary already written is kept; the figures line is added once.
+    setSummary((cur) => (cur.includes("Search Console ") ? cur.replace(/Search Console \d{4}-\d{2}-\d{2}:[^\n]*/, line) : cur.trim() ? `${cur.trim()}\n${line}` : line));
+  };
   const num = (k: string | null) => Number(values[k ?? ""] || 0);
 
   const renderInput = (m: MetricField) => (
     <div key={m.key} className="grid gap-2">
       <Label htmlFor={m.key}>
         {m.name}
+        {fromSearchConsole.has(m.key) && <span className="rounded bg-info/10 px-1.5 py-px text-[10px] font-medium text-info">dari Search Console</span>}
         {m.aggregation === "last" && <span className="font-normal text-muted-foreground">(current total)</span>}
         {m.aggregation === "avg" && <span className="font-normal text-muted-foreground">(today)</span>}
       </Label>
@@ -87,7 +109,7 @@ export function ReportForm({
           step={seo && isSeoReportKey(m.key) && m.key !== "seo_score" ? 1 : "any"}
           placeholder="0"
           value={values[m.key] ?? ""}
-          onChange={(e) => setValues((v) => ({ ...v, [m.key]: e.target.value }))}
+          onChange={(e) => { setValues((v) => ({ ...v, [m.key]: e.target.value })); setFromSearchConsole((s) => { const n = new Set(s); n.delete(m.key); return n; }); }}
           className={m.unit === "currency" ? "pl-9 tabular-nums" : m.unit === "percent" ? "pr-8 tabular-nums" : "tabular-nums"}
           disabled={locked}
           required={!webmaster && (!seo || isSeoReportKey(m.key))}
@@ -99,9 +121,9 @@ export function ReportForm({
       {seo && isSeoReportKey(m.key) && <p className="text-xs font-medium text-muted-foreground">
         {m.key === "seo_score" || m.key === "articles"
           ? `Target harian: minimal ${formatValue(seoTargets.find((t) => t.key === m.key)?.dailyTarget ?? (m.key === "seo_score" ? 85 : 1), "number")}`
-          : "Isi jumlah hari ini, bukan total bulanan atau persentase pertumbuhan."}
+          : "Dari tombol Search Console di atas, atau isi jumlah hari ini (bukan total bulanan)."}
       </p>}
-      {m.description && <p className="text-xs text-muted-foreground">{m.description}</p>}
+      {m.description && !(seo && isSeoReportKey(m.key)) && <p className="text-xs text-muted-foreground">{m.description}</p>}
     </div>
   );
 
@@ -139,7 +161,7 @@ export function ReportForm({
               required
             />
           </div>
-          {seo && <p className="mb-4 text-sm text-muted-foreground">Isi realisasi pada tanggal laporan. Gunakan 0 jika tidak ada hasil; SEO Score berada di antara 0–100.</p>}
+          {seo && <div className="mb-4"><SeoSearchConsoleFill date={date} minDate={minDate} disabled={locked} onFill={fillFromSearchConsole} onPickDate={(d) => router.replace(`/reports/new?date=${d}${dualRole ? `&role=${role}` : ""}`)} /></div>}
           <div className="grid gap-4 sm:grid-cols-2">
             {primaryInputs.map(renderInput)}
           </div>
@@ -158,23 +180,35 @@ export function ReportForm({
               id="summary"
               name="summary"
               rows={4}
-              defaultValue={existing?.summary}
+              value={summary}
+              onChange={(e) => setSummary(e.target.value)}
               placeholder={seo ? "Contoh: menerbitkan 1 artikel, memperbaiki meta description, dan memeriksa performa di Search Console…" : webmaster ? "Contoh: menyelesaikan revisi landing page, memperbaiki tracking, dan menunggu review hasil pengujian…" : "e.g. Scaled 2 winning ad sets, launched new retargeting audience…"}
               disabled={locked}
               required
               minLength={10}
             />
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label htmlFor="blockers">Blockers</Label>
-              <Textarea id="blockers" name="blockers" rows={3} defaultValue={existing?.blockers ?? ""} placeholder="Anything slowing you down?" disabled={locked} />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="planTomorrow">Plan for tomorrow</Label>
-              <Textarea id="planTomorrow" name="planTomorrow" rows={3} defaultValue={existing?.planTomorrow ?? ""} placeholder="Next steps" disabled={locked} />
-            </div>
-          </div>
+          {(() => {
+            const extra = (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-2">
+                  <Label htmlFor="blockers">{seo ? "Kendala" : "Blockers"}</Label>
+                  <Textarea id="blockers" name="blockers" rows={3} defaultValue={existing?.blockers ?? ""} placeholder={seo ? "Ada yang menghambat?" : "Anything slowing you down?"} disabled={locked} />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="planTomorrow">{seo ? "Rencana besok" : "Plan for tomorrow"}</Label>
+                  <Textarea id="planTomorrow" name="planTomorrow" rows={3} defaultValue={existing?.planTomorrow ?? ""} placeholder={seo ? "Langkah berikutnya" : "Next steps"} disabled={locked} />
+                </div>
+              </div>
+            );
+            // The SEO report keeps only what matters up front; the rest is one click away.
+            return seo ? (
+              <details className="rounded-lg border p-3" open={Boolean(existing?.blockers || existing?.planTomorrow) || undefined}>
+                <summary className="cursor-pointer text-sm font-medium">Kendala &amp; rencana besok <span className="font-normal text-muted-foreground">(opsional)</span></summary>
+                <div className="mt-3">{extra}</div>
+              </details>
+            ) : extra;
+          })()}
         </Panel>
       </div>
 

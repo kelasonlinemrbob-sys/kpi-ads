@@ -1,5 +1,6 @@
 import "server-only";
 import { getFormLeadCounts } from "./form-lead-metrics";
+import { getRegistrationKpi } from "./registrations";
 import { cache } from "react";
 import { and, asc, desc, eq, gte, inArray, isNotNull, lte, ne, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -18,19 +19,22 @@ import {
   type Role,
 } from "@/db/schema";
 import { combineScores, needsReview, roleSlots, type RoleHolder, type RoleSlot } from "@/lib/member-roles";
+import { RESTRICTED_HOME } from "@/lib/roles";
 import type { SessionUser } from "@/lib/auth";
 import { taskCompletionAt } from "@/lib/task-kpi";
 import {
-  comparableRange,
+  type DateWindow,
   type Entry,
-  periodAsOf,
+  monthWindow,
   periodRange,
+  previousWindow,
   scoreMember,
   statusOf,
   type KpiStatus,
   type MetricResult,
+  type TargetSlice,
   datesBetween,
-  shiftPeriod,
+  windowSlices,
 } from "@/lib/kpi";
 
 /**
@@ -65,7 +69,8 @@ export const getMembers = cache(async (includeInactive = false, includeSuperviso
       createdAt: users.createdAt,
     })
     .from(users)
-    .where(and(ne(users.role, "cso"), includeSupervisors ? undefined : ne(users.role, "supervisor"), includeInactive ? undefined : eq(users.isActive, true)))
+    // CSO and Creative have no KPI tracker (UNTRACKED_ROLES), so they never appear in scores or report lists.
+    .where(and(notInArray(users.role, ["cso", "creative"]), includeSupervisors ? undefined : ne(users.role, "supervisor"), includeInactive ? undefined : eq(users.isActive, true)))
     .orderBy(asc(users.name)),
 );
 
@@ -128,6 +133,28 @@ export async function getEntries(start: string, end: string, userIds?: number[])
   if (leadMetric) for (const row of formCounts) if (!represented.has(`${row.userId}:${row.campaignId}:${row.date}`)) {
     result.push({userId:row.userId,metricId:leadMetric.id,date:row.date,value:row.leads});
   }
+  // Paid registrations of the LKBI registration app are the advertisers' Closing and Revenue (per product
+  // owner, by payment date). For a member/day they cover, they replace anything entered by hand.
+  const registrationKpi = await getRegistrationKpi(start, end, userIds);
+  const closingMetric = metrics.find((m) => m.role === "advertiser" && m.key === "closing");
+  const revenueMetric = metrics.find((m) => m.role === "advertiser" && m.key === "revenue");
+  if (registrationKpi.length && (closingMetric || revenueMetric)) {
+    const covered = new Set(registrationKpi.map((r) => `${r.userId}:${r.date}`));
+    const replaced = new Set([closingMetric?.id, revenueMetric?.id]);
+    for (let i = result.length - 1; i >= 0; i--) if (replaced.has(result[i]!.metricId) && covered.has(`${result[i]!.userId}:${result[i]!.date}`)) result.splice(i, 1);
+    const perDay = new Map<string, { userId: number; date: string; closing: number; revenue: number }>();
+    for (const r of registrationKpi) {
+      const key = `${r.userId}:${r.date}`;
+      const cur = perDay.get(key) ?? { userId: r.userId, date: r.date, closing: 0, revenue: 0 };
+      cur.closing += r.closing;
+      cur.revenue += r.revenue;
+      perDay.set(key, cur);
+    }
+    for (const r of perDay.values()) {
+      if (closingMetric) result.push({ userId: r.userId, metricId: closingMetric.id, date: r.date, value: r.closing });
+      if (revenueMetric) result.push({ userId: r.userId, metricId: revenueMetric.id, date: r.date, value: r.revenue });
+    }
+  }
   const taskMetric = metrics.find((m) => m.key === "task_completion");
   if (taskMetric) {
     const assigned = await db.select().from(tasks).where(userIds ? inArray(tasks.assigneeId, userIds) : undefined);
@@ -183,9 +210,10 @@ function scoreRoles(opts: {
   metrics: KpiMetric[];
   entries: Entry[];
   previousEntries?: Entry[];
-  targets: Map<number, number>;
-  period: string;
-  asOf: string;
+  window: DateWindow;
+  /** The member's targets for each month the window touches. */
+  slices: TargetSlice[];
+  asOf?: string;
 }) {
   return roleSlots(opts.member).map((slot) => ({
     ...slot,
@@ -194,37 +222,49 @@ function scoreRoles(opts: {
       allMetrics: opts.metrics,
       entries: opts.entries,
       previousEntries: opts.previousEntries,
-      targets: opts.targets,
-      period: opts.period,
-      asOf: opts.asOf,
+      targets: opts.slices[opts.slices.length - 1]?.targets ?? new Map(),
+      targetSlices: opts.slices,
+      period: opts.window.month,
+      window: { start: opts.window.start, end: opts.window.end },
+      asOf: opts.asOf ?? opts.window.asOf,
       targetScale: slot.share / 100,
     }),
   }));
 }
 
-/** Scores every given member for the period, plus the comparable slice of last month. */
-export async function getScorecards(period: string, members: Scorecard["member"][]): Promise<Scorecard[]> {
+const asWindow = (w: string | DateWindow) => (typeof w === "string" ? monthWindow(w) : w);
+
+/** Targets of every month the windows touch, per member. */
+async function windowTargets(windows: DateWindow[], ids: number[]) {
+  const months = [...new Set(windows.flatMap((w) => windowSlices(w).map((sl) => sl.month)))];
+  const maps = await Promise.all(months.map((m) => getTargetMap(m, ids)));
+  const byMonth = new Map(months.map((m, i) => [m, maps[i]!]));
+  return (w: DateWindow, userId: number): TargetSlice[] =>
+    windowSlices(w).map((sl) => ({ days: sl.days, monthDays: sl.monthDays, targets: byMonth.get(sl.month)?.get(userId) ?? new Map() }));
+}
+
+/**
+ * Scores every given member for a month (YYYY-MM) or any date window, plus the comparable slice before
+ * it: last month's same elapsed days, or the same-length range right before a custom range.
+ */
+export async function getScorecards(period: string | DateWindow, members: Scorecard["member"][]): Promise<Scorecard[]> {
   const ids = members.map((m) => m.id);
-  const asOf = periodAsOf(period);
-  const { start } = periodRange(period);
-  const prev = comparableRange(period, asOf);
-  const baselineRange = periodRange(prev.period);
-  const olderRange = periodRange(shiftPeriod(period, -2));
-  const [baseline, olderBaseline] = await Promise.all([
-    getEntries(baselineRange.start, baselineRange.end, ids),
-    getEntries(olderRange.start, olderRange.end, ids),
-  ]);
-  const [metrics, entries, prevEntries, targets, prevTargets, reportStats] = await Promise.all([
+  const w = asWindow(period);
+  const prev = previousWindow(w);
+  // Growth targets compare with the whole window before (the full previous month for a month).
+  const older = previousWindow(prev);
+  const [metrics, entries, prevEntries, baseline, olderBaseline, slicesFor, reportStats] = await Promise.all([
     getMetrics(),
-    getEntries(start, asOf, ids),
+    getEntries(w.start, w.asOf, ids),
+    getEntries(prev.start, prev.asOf, ids),
     getEntries(prev.start, prev.end, ids),
-    getTargetMap(period, ids),
-    getTargetMap(prev.period, ids),
+    getEntries(older.start, older.end, ids),
+    windowTargets([w, prev], ids),
     ids.length
       ? db
           .select({
             userId: dailyReports.userId,
-            count: sql<number>`count(*) filter (where ${dailyReports.date} between ${start} and ${asOf})`.mapWith(Number),
+            count: sql<number>`count(*) filter (where ${dailyReports.date} between ${w.start} and ${w.asOf})`.mapWith(Number),
             last: sql<string | null>`max(${dailyReports.date})`,
           })
           .from(dailyReports)
@@ -240,18 +280,16 @@ export async function getScorecards(period: string, members: Scorecard["member"]
       metrics,
       entries: entries.filter((e) => e.userId === member.id),
       previousEntries: baseline.filter((e) => e.userId === member.id),
-      targets: targets.get(member.id) ?? new Map(),
-      period,
-      asOf,
+      window: w,
+      slices: slicesFor(w, member.id),
     });
     const before = scoreRoles({
       member,
       metrics,
       entries: prevEntries.filter((e) => e.userId === member.id),
       previousEntries: olderBaseline.filter((e) => e.userId === member.id),
-      targets: prevTargets.get(member.id) ?? new Map(),
-      period: prev.period,
-      asOf: prev.end,
+      window: prev,
+      slices: slicesFor(prev, member.id),
     });
     const score = combineScores(cur);
     const s = stats.get(member.id);
@@ -268,29 +306,26 @@ export async function getScorecards(period: string, members: Scorecard["member"]
   });
 }
 
-/** Team score for each day of the period, computed as-of that day (for sparklines). */
-export async function getTeamScoreSeries(period: string, members: Scorecard["member"][]) {
+/** Team score for each day of the month or window, computed as-of that day (for sparklines). */
+export async function getTeamScoreSeries(period: string | DateWindow, members: Scorecard["member"][]) {
   const ids = members.map((m) => m.id);
-  const asOf = periodAsOf(period);
-  const { start } = periodRange(period);
-  const prev = periodRange(shiftPeriod(period, -1));
-  const previousEntries = await getEntries(prev.start, prev.end, ids);
-  const [metrics, entries, targets] = await Promise.all([getMetrics(), getEntries(start, asOf, ids), getTargetMap(period, ids)]);
-  return datesBetween(start, asOf).map((date) => {
+  const w = asWindow(period);
+  const prev = previousWindow(w);
+  const [metrics, entries, previousEntries, slicesFor] = await Promise.all([
+    getMetrics(),
+    getEntries(w.start, w.asOf, ids),
+    getEntries(prev.start, prev.end, ids),
+    windowTargets([w], ids),
+  ]);
+  const own = new Map(members.map((m) => [m.id, { entries: entries.filter((e) => e.userId === m.id), previous: previousEntries.filter((e) => e.userId === m.id), slices: slicesFor(w, m.id) }]));
+  return datesBetween(w.start, w.asOf).map((date) => {
     const scores = members
-      .map((member) =>
-        combineScores(
-          scoreRoles({
-            member,
-            metrics,
-            entries: entries.filter((e) => e.userId === member.id && e.date <= date),
-            previousEntries: previousEntries.filter((e) => e.userId === member.id),
-            targets: targets.get(member.id) ?? new Map(),
-            period,
-            asOf: date,
-          }),
-        ),
-      )
+      .map((member) => {
+        const mine = own.get(member.id)!;
+        return combineScores(
+          scoreRoles({ member, metrics, entries: mine.entries.filter((e) => e.date <= date), previousEntries: mine.previous, window: w, slices: mine.slices, asOf: date }),
+        );
+      })
       .filter((s): s is number => s !== null);
     return { date, value: scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0 };
   });
@@ -333,6 +368,8 @@ export async function logActivity(a: {
 }
 
 export async function getNotifications(user: SessionUser) {
+  // CSO and Creative have no reports or task board to be notified about.
+  if (RESTRICTED_HOME[user.role]) return { pendingReviews: 0, openTasks: 0, revisions: 0 };
   if (user.role === "supervisor") {
     const [row] = await db
       .select({ n: sql<number>`count(*)`.mapWith(Number) })

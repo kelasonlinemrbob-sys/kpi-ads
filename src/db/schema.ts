@@ -291,6 +291,14 @@ export const campaigns = pgTable("campaigns", {
   adAccountId: integer("ad_account_id").references(() => adAccounts.id, { onDelete: "set null" }),
   /** Product code that must appear in the platform campaign name, e.g. "SERUM" for "[SERUM] Retargeting". */
   matchKeyword: varchar("match_keyword", { length: 60 }),
+  /**
+   * Package names of a registration app that count as this product's closings: comma-separated, matched
+   * as text inside the package (longest wins); "*" takes every package no other product of that app claims.
+   * Kelas Online packages read "ADULT · SPEAK UP 1 · VIP" / "KIDS · SMART KIDS · VIP".
+   */
+  registrationPackages: text("registration_packages"),
+  /** The registration app `registrationPackages` refers to: "lkbi" or "kelas" (Kelas Online). */
+  registrationSource: varchar("registration_source", { length: 20 }).notNull().default("lkbi"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -494,6 +502,19 @@ export const appSettings = pgTable("app_settings", {
 });
 
 export type User = typeof users.$inferSelect;
+
+/**
+ * The advertisers a Creative member works for ("Creative Ryant"). They see only those advertisers'
+ * ad contents on Creative, as the advertisers do; a Creative without rows here sees the whole team.
+ */
+export const creativeAdvertisers = pgTable(
+  "creative_advertisers",
+  {
+    creativeId: integer("creative_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    advertiserId: integer("advertiser_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.creativeId, t.advertiserId] }), index("creative_advertisers_advertiser").on(t.advertiserId)],
+);
 export type AdvertiserLevel = (typeof advertiserLevelEnum.enumValues)[number];
 export type PerformanceAppraisal = typeof performanceAppraisals.$inferSelect;
 export type AdCreative = typeof adCreatives.$inferSelect;
@@ -608,8 +629,22 @@ export const orderForms = pgTable("order_forms", {
   routing: varchar("routing", { length: 20 }).notNull().default("fixed"),
   assigneeIds: jsonb("assignee_ids").$type<number[]>().notNull().default([]),
   cursor: integer("cursor").notNull().default(0), published: boolean("published").notNull().default(false),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
   source: varchar("source", { length: 12 }).notNull().default("ads"),
   message: text("message").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export const orderFormDomains = pgTable("order_form_domains", {
+  id: serial("id").primaryKey(),
+  formId: integer("form_id").notNull().unique().references(() => orderForms.id, { onDelete: "restrict" }),
+  hostname: varchar("hostname", { length: 253 }).notNull().unique(),
+  verificationToken: varchar("verification_token", { length: 64 }).notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("pending_dns"),
+  error: text("error"),
+  checkedAt: timestamp("checked_at", { withTimezone: true }),
+  tlsAttemptAt: timestamp("tls_attempt_at", { withTimezone: true }),
+  activatedAt: timestamp("activated_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -628,6 +663,7 @@ export const orderLeads = pgTable("order_leads", {
   paymentStatus: varchar("payment_status", { length: 16 }).notNull().default("unpaid"),
   revenue: doublePrecision("revenue").notNull().default(0),
   followUpStep: integer("follow_up_step").notNull().default(0),
+  waOpenedAt: jsonb("wa_opened_at").$type<Record<string, string>>().notNull().default({}),
   followUpAt: timestamp("follow_up_at", { withTimezone: true }),
   notes: text("notes").notNull().default(""), attribution: jsonb("attribution").$type<Record<string,string>>().notNull().default({}),
   measurementConsent: boolean("measurement_consent").notNull().default(false),
@@ -642,6 +678,13 @@ export const orderLeadEvents = pgTable("order_lead_events", {
   id: serial("id").primaryKey(), leadId: integer("lead_id").notNull().references(() => orderLeads.id, { onDelete: "cascade" }),
   actorId: integer("actor_id").notNull().references(() => users.id, { onDelete: "restrict" }),
   detail: text("detail").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const leadWaTemplates = pgTable("lead_wa_templates", {
+  campaignId: integer("campaign_id").primaryKey().references(() => campaigns.id, { onDelete: "cascade" }),
+  messages: jsonb("messages").$type<import("@/lib/lead-wa-message").WaMessages>().notNull(),
+  updatedBy: integer("updated_by").notNull().references(() => users.id, { onDelete: "restrict" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 /** Tokens are separate from order_forms so form DTOs never contain credentials. */
@@ -663,3 +706,55 @@ export const metaCapiOutbox = pgTable("meta_capi_outbox", {
  nextAttemptAt: timestamp("next_attempt_at",{withTimezone:true}).notNull().defaultNow(),
  sentAt: timestamp("sent_at",{withTimezone:true}), createdAt: timestamp("created_at",{withTimezone:true}).notNull().defaultNow(),
 },t=>[index("meta_capi_due").on(t.status,t.nextAttemptAt)]);
+
+/** AI ad analyses via Kie.ai: "creatives" (Claude, Ringkasan) and "creative_content" (Gemini, one content). Runs in the background: "running" → "done" | "failed". */
+export const aiAnalyses = pgTable("ai_analyses", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  /** What was analysed, e.g. "creatives". */
+  kind: varchar("kind", { length: 30 }).notNull(),
+  /** Canonical filters of the analysed view, so the page shows the analysis that matches it. */
+  filterKey: text("filter_key").notNull(),
+  periodStart: date("period_start").notNull(),
+  periodEnd: date("period_end").notNull(),
+  status: varchar("status", { length: 12 }).notNull().default("running"),
+  /** The numbers sent to the model, kept so the result can be read against them later. */
+  input: jsonb("input").notNull(),
+  result: jsonb("result"),
+  error: text("error"),
+  model: varchar("model", { length: 60 }),
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  /** Credits Kie reported for the run (Gemini does); null = estimate from tokens. */
+  credits: doublePrecision("credits"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+}, (t) => [index("ai_analyses_user_kind").on(t.userId, t.kind, t.createdAt), index("ai_analyses_kind_filter").on(t.kind, t.filterKey, t.createdAt)]);
+
+export type AiAnalysis = typeof aiAnalyses.$inferSelect;
+
+/**
+ * Copy of the LKBI Mr.BOB registration app (API integrasi v1), kept for closing / revenue KPIs. Only what
+ * the KPIs and their review need: no phone, email, birth date, address or transfer proof.
+ */
+export const externalRegistrations = pgTable("external_registrations", {
+  /** Which registration app: "lkbi" (lkbimrbob.com) or "kelas" (Kelas Online, app.kelasonlinemrbob.com). */
+  source: varchar("source", { length: 20 }).notNull().default("lkbi"),
+  /** The source `id`: never reused, unlike the REG- number. Unique within its source. */
+  id: integer("id").notNull(),
+  registrationId: varchar("registration_id", { length: 40 }).notNull(),
+  name: varchar("name", { length: 160 }).notNull(),
+  packageName: varchar("package_name", { length: 200 }).notNull(),
+  period: varchar("period", { length: 80 }),
+  status: varchar("status", { length: 20 }).notNull(),
+  totalPrice: doublePrecision("total_price").notNull().default(0),
+  infoSource: varchar("info_source", { length: 160 }),
+  city: varchar("city", { length: 120 }),
+  /** First payment the admin accepted (still accepted now); null while unpaid or after a rejection. */
+  paidAt: timestamp("paid_at", { withTimezone: true }),
+  registeredAt: timestamp("registered_at", { withTimezone: true }).notNull(),
+  changedAt: timestamp("changed_at", { withTimezone: true }).notNull(),
+  syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [primaryKey({ columns: [t.source, t.id] }), index("external_registrations_paid").on(t.paidAt), index("external_registrations_registered").on(t.registeredAt)]);
+
+export type ExternalRegistration = typeof externalRegistrations.$inferSelect;

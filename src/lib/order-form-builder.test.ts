@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import vm from "node:vm";
-import { appearanceSchema,trackingSchema,weightedRecipient,leadCommerceSchema,evenWeights,rebalanceWeights,readAppearance,contrastRatio,FORM_THEMES } from "./order-form-config";
+import { appearanceSchema,trackingSchema,weightedRecipient,leadCommerceSchema,evenWeights,rebalanceWeights,readAppearance,contrastRatio,FORM_THEMES,THEME_TOKEN_DEFAULTS,DEFAULT_APPEARANCE,applyFormTheme } from "./order-form-config";
 import { orderFormInput,DEFAULT_ORDER_FIELDS } from "./order-form-input";
 import { buildOrderEmbed } from "./order-embed";
 test("form validation rejects invalid percentages, script injection and invalid commerce",()=>{
@@ -66,4 +66,32 @@ test("embed uses the saved event snapshot for CAPI deduplication",()=>{
  send({type:"kpiads:lead",reference,consent:true,meta:{event:"Contact",pixelIds:["7777777777"]}});
  const calls=context.fbq.queue.filter((e:any)=>e[0]==="trackSingle");
  assert.equal(calls.length,1);assert.equal(calls[0][1],"7777777777");assert.equal(calls[0][2],"Contact");assert.equal(calls[0][4].eventID,reference);
+});
+
+test("detailed theme: old forms keep their look, every preset is valid and readable, URLs are plain https",()=>{
+ // A form saved before the detailed options gets exactly the original look.
+ const legacy=readAppearance({theme:"ocean",buttonColor:"#2563eb",buttonStyle:"outline",radius:"lg"});
+ for(const [key,value] of Object.entries(THEME_TOKEN_DEFAULTS))if(!["buttonColor","buttonStyle","radius"].includes(key))assert.deepEqual((legacy as Record<string,unknown>)[key],value,key);
+ assert.deepEqual([legacy.logoUrl,legacy.bannerUrl,legacy.titleDivider,legacy.benefitsPosition,legacy.benefitsIcons],["","",true,"top",true]);
+ assert.equal(Object.keys(FORM_THEMES).length,10);
+ for(const id of Object.keys(FORM_THEMES) as (keyof typeof FORM_THEMES)[]){
+  const themed=applyFormTheme(DEFAULT_APPEARANCE,id);
+  assert.ok(appearanceSchema.safeParse(themed).success,id);
+  assert.ok(contrastRatio(themed.textColor,themed.backgroundColor)>=4.5,id);
+  assert.ok(contrastRatio(themed.headingColor??themed.textColor,themed.backgroundColor)>=4.5,`${id} heading`);
+ }
+ // Switching preset leaves nothing of the previous one behind (e.g. promo's red heading).
+ const back=applyFormTheme(applyFormTheme(DEFAULT_APPEARANCE,"promo"),"whatsapp");
+ assert.equal(back.headingColor,null);assert.equal(back.titleWeight,"semibold");assert.equal(back.buttonSize,"md");
+ // Text and images are content, not theme.
+ const own=applyFormTheme({...DEFAULT_APPEARANCE,buttonText:"Daftar sekarang",logoUrl:"https://cdn.example/logo.png"},"sunset");
+ assert.equal(own.buttonText,"Daftar sekarang");assert.equal(own.logoUrl,"https://cdn.example/logo.png");
+ assert.ok(appearanceSchema.safeParse({logoUrl:"https://cdn.example/a/logo.png?v=2",bannerUrl:""}).success);
+ for(const bad of ["http://cdn.example/logo.png","javascript:alert(1)","https://x.example/a.png\") ;background:red","https://x.example/a b.png","https://x.example/<x>.png","data:image/png;base64,AAAA"])assert.equal(appearanceSchema.safeParse({logoUrl:bad}).success,false,bad);
+ for(const bad of [{headingColor:"red"},{pageGradientAngle:400},{buttonStyle:"neon"},{width:"huge"},{fieldRadius:"round"},{font:"comic"}])assert.equal(appearanceSchema.safeParse(bad).success,false,JSON.stringify(bad));
+});
+
+test("embed iframe takes the form width, bounded",()=>{
+ const width=(value?:number)=>/max-width:(\d+)px/.exec(buildOrderEmbed("https://app.example/f/"+"a".repeat(24),{},value))?.[1];
+ assert.equal(width(),"600");assert.equal(width(720),"720");assert.equal(width(480),"480");assert.equal(width(5000),"600");assert.equal(width(Number.NaN),"600");
 });

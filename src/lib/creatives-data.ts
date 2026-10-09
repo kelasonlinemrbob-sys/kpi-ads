@@ -1,9 +1,10 @@
 import "server-only";
-import { and, desc, eq, isNotNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
 import { adAccounts, adCreatives, creativeMetrics, creativeSyncs, campaigns, users, type AdCreative, type Role } from "@/db/schema";
 import { creativePeriod, type CreativePeriodKey } from "./creative-period";
 import { matchProduct } from "@/lib/ads-matching";
+import { visibleTo, type AdsScope } from "@/lib/ads-visibility";
 import {
   CREATIVE_FORMAT_LABEL,
   CREATIVE_LABEL,
@@ -18,6 +19,8 @@ import {
 /** One row of the Creative page / export, with the advertiser and product resolved like the reports do. */
 export type CreativeRow = {
   id: number;
+  adAccountId: number;
+  externalAdId: string;
   accountName: string;
   adName: string;
   campaignName: string | null;
@@ -59,33 +62,67 @@ export type CreativeFilters = {
   q?: string | null;
   period?: CreativePeriodKey;
   sort?: "impressions" | "thruplays" | "newest" | "playtime" | "spend" | "ctr" | "hook" | "cpl";
+  /** Whose contents the viewer may see (see ads-visibility); null/absent = the whole team. */
+  scope?: AdsScope;
 };
+
+/** Products linked to an ad account by a product code: the matching used everywhere ads map to products. */
+async function linkedProducts() {
+  const products = await db
+    .select({
+      adAccountId: campaigns.adAccountId,
+      keyword: campaigns.matchKeyword,
+      product: campaigns.product,
+      name: campaigns.name,
+      ownerId: campaigns.ownerId,
+      ownerName: users.name,
+    })
+    .from(campaigns)
+    .innerJoin(users, eq(users.id, campaigns.ownerId))
+    .where(and(isNotNull(campaigns.adAccountId), isNotNull(campaigns.matchKeyword)));
+  return products.filter((p) => p.keyword?.trim()).map((p) => ({ ...p, keyword: p.keyword! }));
+}
+
+/** Which of these ad creatives the viewer may see or edit, in any period. */
+export async function visibleCreativeIds(scope: AdsScope, ids: number[]) {
+  if (!ids.length) return new Set<number>();
+  const [rows, linked] = await Promise.all([
+    db.select({ id: adCreatives.id, adAccountId: adCreatives.adAccountId, campaignName: adCreatives.campaignName }).from(adCreatives).where(inArray(adCreatives.id, ids)),
+    scope ? linkedProducts() : Promise.resolve([]),
+  ]);
+  return new Set(
+    rows
+      .filter((c) => {
+        const product = c.campaignName ? matchProduct(c.campaignName, linked.filter((p) => p.adAccountId === c.adAccountId)) : null;
+        return visibleTo(scope, { adAccountId: c.adAccountId, ownerId: product?.ownerId ?? null });
+      })
+      .map((c) => c.id),
+  );
+}
+
+/** Whether the viewer may see a content (post key from postKeyOf: the post id, or "ad-<id>"). */
+export async function contentVisibleTo(scope: AdsScope, postKey: string) {
+  if (!scope) return true;
+  const adId = /^ad-(\d+)$/.exec(postKey)?.[1];
+  const ads = await db.select({ id: adCreatives.id }).from(adCreatives).where(adId ? eq(adCreatives.id, Number(adId)) : eq(adCreatives.postId, postKey));
+  return (await visibleCreativeIds(scope, ads.map((a) => a.id))).size > 0;
+}
 
 export async function getCreativeRows(filters: CreativeFilters = {}): Promise<CreativeRow[]> {
   const period = creativePeriod(filters.period);
-  const [rows, products] = await Promise.all([
+  const scopeAccounts = filters.scope ? [...filters.scope.accountIds] : null;
+  if (scopeAccounts && !scopeAccounts.length) return [];
+  const [rows, linked] = await Promise.all([
     db
       .select({ c: adCreatives, m: creativeMetrics, syncedAt: creativeSyncs.syncedAt, accountName: adAccounts.name })
       .from(adCreatives)
       .innerJoin(adAccounts, eq(adAccounts.id, adCreatives.adAccountId))
       .innerJoin(creativeMetrics, eq(creativeMetrics.creativeId, adCreatives.id))
       .innerJoin(creativeSyncs, and(eq(creativeSyncs.id, creativeMetrics.syncId), eq(creativeSyncs.adAccountId, adCreatives.adAccountId)))
-      .where(and(eq(creativeSyncs.periodStart, period.start), eq(creativeSyncs.periodEnd, period.end)))
+      .where(and(eq(creativeSyncs.periodStart, period.start), eq(creativeSyncs.periodEnd, period.end), scopeAccounts ? inArray(adCreatives.adAccountId, scopeAccounts) : undefined))
       .orderBy(desc(creativeMetrics.impressions)),
-    db
-      .select({
-        adAccountId: campaigns.adAccountId,
-        keyword: campaigns.matchKeyword,
-        product: campaigns.product,
-        name: campaigns.name,
-        ownerId: campaigns.ownerId,
-        ownerName: users.name,
-      })
-      .from(campaigns)
-      .innerJoin(users, eq(users.id, campaigns.ownerId))
-      .where(and(isNotNull(campaigns.adAccountId), isNotNull(campaigns.matchKeyword))),
+    linkedProducts(),
   ]);
-  const linked = products.filter((p) => p.keyword?.trim()).map((p) => ({ ...p, keyword: p.keyword! }));
   const q = filters.q?.trim().toLowerCase();
 
   const all: CreativeRow[] = rows.map(({ c, m, syncedAt, accountName }) => {
@@ -93,6 +130,8 @@ export async function getCreativeRows(filters: CreativeFilters = {}): Promise<Cr
     const product = c.campaignName ? matchProduct(c.campaignName, linked.filter((p) => p.adAccountId === c.adAccountId)) : null;
     return {
       id: c.id,
+      adAccountId: c.adAccountId,
+      externalAdId: c.externalAdId,
       accountName,
       adName: c.adName,
       campaignName: c.campaignName,
@@ -125,6 +164,7 @@ export async function getCreativeRows(filters: CreativeFilters = {}): Promise<Cr
 
   const filtered = all.filter(
     (r) =>
+      visibleTo(filters.scope ?? null, { adAccountId: r.adAccountId, ownerId: r.advertiser?.id ?? null }) &&
       (!filters.advertiser || r.advertiser?.id === filters.advertiser) &&
       (!filters.product || r.product === filters.product) &&
       (!filters.status || r.status === filters.status) &&

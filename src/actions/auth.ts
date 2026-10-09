@@ -7,6 +7,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { createSession, destroySession } from "@/lib/auth";
+import { homePath } from "@/lib/roles";
 
 export type FormState = { error?: string; ok?: boolean; message?: string; warning?: string } | undefined;
 
@@ -27,7 +28,7 @@ export async function login(_: FormState, formData: FormData): Promise<FormState
 
   await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
   await createSession(user.id, user.sessionVersion, formData.get("remember") === "on");
-  redirect("/dashboard");
+  redirect(homePath(user.role));
 }
 
 export async function logout() {

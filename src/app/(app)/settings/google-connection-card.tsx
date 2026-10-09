@@ -3,10 +3,9 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ChevronDownIcon, LoaderIcon, PlugIcon, PlusIcon, Settings2Icon, UnplugIcon } from "lucide-react";
+import { ChevronDownIcon, LoaderIcon, PlugIcon, Settings2Icon, UnplugIcon } from "lucide-react";
 import { toast } from "sonner";
 import { saveGoogleConnectionAction, testGoogleConnectionAction, disableGoogleConnectionAction } from "@/actions/google-connection";
-import { saveAdAccount } from "@/actions/ad-accounts";
 import type { GoogleConnectionStatus } from "@/lib/google-connection";
 import type { GoogleVerifiedAccount } from "@/lib/google-client";
 import { Button } from "@/components/ui/button";
@@ -24,7 +23,6 @@ export function GoogleConnectionCard({ status, canManage, registeredAccountIds, 
   const [state, action, saving] = React.useActionState(saveGoogleConnectionAction, undefined);
   const [pending, start] = React.useTransition();
   const [account, setAccount] = React.useState<GoogleVerifiedAccount | null>(status.account);
-  const [added, setAdded] = React.useState<string[]>([]);
   const [testError, setTestError] = React.useState("");
   React.useEffect(() => { setAccount(status.account); }, [status.account]);
   React.useEffect(() => {
@@ -39,23 +37,16 @@ export function GoogleConnectionCard({ status, canManage, registeredAccountIds, 
     router.refresh();
   });
   const disconnect = () => {
-    if (!confirm("Putuskan koneksi Google Ads? Sinkronisasi dan Generate dari akun Google berhenti sampai kredensial diisi kembali.")) return;
+    if (!confirm("Putuskan koneksi Google Ads tim? Sinkronisasi dan Generate dari akun Google seluruh advertiser berhenti sampai kredensial diisi kembali.")) return;
     start(async () => {
       const result = await disableGoogleConnectionAction();
       if (result.error) toast.error(result.error);
       else { setAccount(null); setTestError(""); toast.success("Koneksi Google Ads dinonaktifkan"); router.refresh(); }
     });
   };
-  const add = () => start(async () => {
-    if (!account) return;
-    const form = new FormData(); form.set("platform", "google"); form.set("name", account.name.slice(0, 120)); form.set("accountId", account.accountId);
-    const result = await saveAdAccount(undefined, form);
-    if (result?.error) toast.error(result.error);
-    else { setAdded((ids) => [...ids, account.accountId]); toast.success("Akun Google ditambahkan. Lanjutkan Sinkron dari Ads di Campaigns."); router.refresh(); }
-  });
   const connected = status.hasClientSecret && status.hasRefreshToken;
   return <Panel title="Koneksi Google Ads" icon={PlugIcon} iconPosition="left" action={<Badge variant={status.state === "ok" ? "success" : "secondary"}>{labels[status.state]}</Badge>} className="border-0 bg-none p-0" bodyClassName="grid min-w-0 gap-5 p-4 sm:p-5">
-    <p className="text-sm text-muted-foreground">Hubungkan akun Google untuk metrik campaign, Sinkron dari Ads, dan Generate laporan harian. Koneksi ini hanya digunakan untuk akun Google Ads yang Anda daftarkan. Advertiser lain mengatur koneksinya sendiri.</p>
+    <p className="text-sm text-muted-foreground">{canManage ? "Satu koneksi Google Ads untuk seluruh tim: metrik campaign, Sinkron dari Ads, dan Generate laporan harian semua akun Google yang dipilih advertiser memakai kredensial ini. Advertiser tidak mengisi kredensial; mereka cukup memilih akun iklannya di bawah. Gunakan MCC agar semua akun tim terbaca." : "Koneksi Google Ads dikelola supervisor untuk seluruh tim. Anda cukup memilih akun iklan yang Anda kelola di bawah."}</p>
     <div className="grid gap-1 rounded-lg border bg-muted/30 p-4 text-sm break-words"><p>{status.summary}</p>{status.checkedAt && <p className="text-xs text-muted-foreground">Terakhir diperiksa: {new Date(status.checkedAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} WIB</p>}{status.source === "env" && <p className="text-xs text-muted-foreground">Konfigurasi berasal dari server. Kredensial yang disimpan di form ini akan diprioritaskan.</p>}</div>
     {canManage && connected && <div className="flex flex-wrap items-center gap-3"><Button type="button" variant="outline" disabled={saving || pending} onClick={test}>{pending ? <LoaderIcon className="animate-spin" /> : <PlugIcon />}Tes koneksi</Button><span className="text-xs text-muted-foreground">Memeriksa akses menggunakan kredensial tersimpan.</span></div>}
     {testError && <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">{testError}</p>}
@@ -71,9 +62,9 @@ export function GoogleConnectionCard({ status, canManage, registeredAccountIds, 
       {state?.error && <p role="alert" className="text-sm text-destructive">{state.error}</p>}
       {state?.ok && <p role="status" className="text-sm text-success">{state.message}</p>}
       <div className="flex flex-wrap gap-2"><Button type="submit" disabled={saving || pending}>{saving && <LoaderIcon className="animate-spin" />}Simpan &amp; tes</Button>{connected && <Button type="button" variant="outline" disabled={saving || pending} onClick={test}>{pending && <LoaderIcon className="animate-spin" />}Tes kredensial tersimpan</Button>}{connected && <Button type="button" variant="ghost" disabled={saving || pending} onClick={disconnect}><UnplugIcon />Putuskan</Button>}</div>
-    </form></div></details> : <p className="text-sm text-muted-foreground">Kredensial dan tes koneksi dikelola oleh supervisor. Tutorial berikut dapat dibaca oleh seluruh advertiser.</p>}
-    {account && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div className="min-w-0"><p className="break-words font-medium">{account.name}</p><p className="text-xs text-muted-foreground">Customer ID {account.accountId} · {account.currency}</p></div>{registeredAccountIds.includes(account.accountId) || added.includes(account.accountId) ? <Badge variant="success">Terdaftar</Badge> : canManage && <Button type="button" variant="outline" size="sm" onClick={add} disabled={saving || pending}><PlusIcon />Tambahkan akun ini</Button>}</div>}
+    </form></div></details> : null}
+    {canManage && account && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div className="min-w-0"><p className="break-words font-medium">{account.name}</p><p className="text-xs text-muted-foreground">Akun tes · Customer ID {account.accountId} · {account.currency}</p></div>{registeredAccountIds.includes(account.accountId) && <Badge variant="success">Terdaftar</Badge>}</div>}
     <Link href="/campaigns" className="text-sm font-medium underline underline-offset-2">Buka Campaigns untuk sinkronisasi, product, dan sumber LPV</Link>
-    <details className="rounded-lg border bg-muted/20 p-4"><summary className="cursor-pointer text-sm font-medium">Tutorial lengkap: hubungkan Google Ads dari awal</summary><div className="mt-4">{guide}</div></details>
+    {canManage && <details className="rounded-lg border bg-muted/20 p-4"><summary className="cursor-pointer text-sm font-medium">Tutorial lengkap: hubungkan Google Ads dari awal</summary><div className="mt-4">{guide}</div></details>}
   </Panel>;
 }

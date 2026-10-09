@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckIcon } from "lucide-react";
-import { AVATAR_IDS } from "@/lib/profile-avatar";
+import { AVATAR_IDS } from "@/lib/avatar-ids";
 import { UserAvatar } from "@/components/user-avatar";
 
 export function AvatarPicker({ name, value, onChange, disabled }: { name: string; value: number | null; onChange: (value: number | null) => void; disabled?: boolean }) {

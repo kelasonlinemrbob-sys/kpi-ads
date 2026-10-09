@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { adAccounts, campaigns, orderForms, campaignStatusEnum, platformEnum, users } from "@/db/schema";
 import { normalizeKeyword } from "@/lib/ads-matching";
 import { requireUser } from "@/lib/auth";
+import { parsePackageKeywords, REGISTRATION_SOURCES } from "@/lib/registration-mapping";
 import { logActivity } from "@/lib/data";
 import { can } from "@/lib/roles";
 import type { FormState } from "./auth";
@@ -40,6 +41,13 @@ const campaignSchema = z.object({
     .max(60)
     .optional()
     .transform((v) => (v ? normalizeKeyword(v) : null)),
+  registrationPackages: z
+    .string()
+    .trim()
+    .max(500, "Paket pendaftaran maksimal 500 karakter.")
+    .optional()
+    .transform((v) => (v ? parsePackageKeywords(v).join(", ") || null : null)),
+  registrationSource: z.enum(REGISTRATION_SOURCES).optional().default("lkbi"),
 });
 
 async function loadEditable(id: number) {

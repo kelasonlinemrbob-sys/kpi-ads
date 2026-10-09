@@ -18,11 +18,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { KpiStatusLabel } from "@/components/dashboard/kpi-status";
 import { Panel } from "@/components/dashboard/panel";
 import { UserAvatar } from "@/components/user-avatar";
-import { MemberDialog, type EditableMember } from "./member-dialog";
+import { MemberDialog, type AdvertiserOption, type EditableMember } from "./member-dialog";
+import { isTracked } from "@/lib/member-roles";
 
 export type MemberRow = EditableMember & { invitationStatus: string | null; inviteExpiresAt: string | null; inviteRevokedAt: string | null; lastLoginAt: string | null; score: number | null; status: KpiStatus | null };
 
-export function MembersTable({ rows, metrics, period }: { rows: MemberRow[]; metrics: KpiMetric[]; period: string }) {
+export function MembersTable({ rows, metrics, period, advertisers }: { rows: MemberRow[]; metrics: KpiMetric[]; period: string; advertisers: AdvertiserOption[] }) {
+  const advertiserName = new Map(advertisers.map((a) => [a.id, a.name]));
   const router = useRouter();
   const [editing, setEditing] = React.useState<MemberRow | null>(null);
 
@@ -79,12 +81,13 @@ export function MembersTable({ rows, metrics, period }: { rows: MemberRow[]; met
                       + {ROLE_LABEL[m.secondaryRole]} {m.secondaryShare}%
                     </Badge>
                   )}
+                  {m.role === "creative" && <span className="mt-1 block text-xs text-muted-foreground">{m.linkedAdvertiserIds?.length ? `Creative untuk ${m.linkedAdvertiserIds.map((id) => advertiserName.get(id) ?? "?").join(", ")}` : "Creative semua advertiser"}</span>}
                   {m.title && <span className="mt-1 block text-xs text-muted-foreground">{m.title}</span>}
                 </TableCell>
                 <TableCell>
                   {m.invitationPending ? <div className="min-w-40 space-y-1"><Badge variant="outline">{m.invitationStatus}</Badge>{m.inviteExpiresAt && !m.inviteRevokedAt && <span className="block text-xs text-muted-foreground">Berlaku sampai {new Date(m.inviteExpiresAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} WIB</span>}</div> : m.isActive ? <Badge variant="success">Active</Badge> : <Badge variant="secondary">Inactive</Badge>}
                 </TableCell>
-                <TableCell><Link href={`/targets?user=${m.id}&period=${period}`} className="inline-flex items-center gap-1.5 text-sm font-medium underline-offset-4 hover:underline"><TargetIcon className="size-3.5" />Atur target</Link><span className="block text-xs text-muted-foreground">{Object.keys(m.targets ?? {}).length} target pribadi tersimpan</span></TableCell>
+                <TableCell>{!isTracked(m) ? <span className="text-xs text-muted-foreground">Tanpa KPI</span> : <><Link href={`/targets?user=${m.id}&period=${period}`} className="inline-flex items-center gap-1.5 text-sm font-medium underline-offset-4 hover:underline"><TargetIcon className="size-3.5" />Atur target</Link><span className="block text-xs text-muted-foreground">{Object.keys(m.targets ?? {}).length} target pribadi tersimpan</span></>}</TableCell>
                 <TableCell className="text-right font-medium tabular-nums">{m.score === null ? "–" : formatNumber(m.score, 0)}</TableCell>
                 <TableCell>{m.status ? <KpiStatusLabel status={m.status} /> : <span className="text-muted-foreground">—</span>}</TableCell>
                 <TableCell className="text-muted-foreground">{m.lastLoginAt ?? "Never"}</TableCell>
@@ -99,7 +102,7 @@ export function MembersTable({ rows, metrics, period }: { rows: MemberRow[]; met
                       <DropdownMenuItem onSelect={() => setEditing(m)}>
                         <PencilIcon /> Edit
                       </DropdownMenuItem>
-                      {m.role !== "supervisor" && (
+                      {m.role !== "supervisor" && isTracked(m) && (
                         <DropdownMenuItem asChild>
                           <Link href={`/scorecard?user=${m.id}&period=${period}`}>
                             <GaugeIcon /> Scorecard
@@ -131,7 +134,7 @@ export function MembersTable({ rows, metrics, period }: { rows: MemberRow[]; met
           </TableBody>
         </Table>
       </div>
-      {editing && <MemberDialog key={editing.id} metrics={metrics} period={period} member={editing} onClose={() => (setEditing(null), router.refresh())} />}
+      {editing && <MemberDialog key={editing.id} metrics={metrics} period={period} advertisers={advertisers} member={editing} onClose={() => (setEditing(null), router.refresh())} />}
     </Panel>
   );
 }

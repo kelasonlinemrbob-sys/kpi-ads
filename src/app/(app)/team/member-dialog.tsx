@@ -8,7 +8,7 @@ import type { AdvertiserLevel, KpiMetric, Role } from "@/db/schema";
 import { saveMember } from "@/actions/team";
 import { useRouter } from "next/navigation";
 import { MemberTargetFields } from "@/components/member-target-fields";
-import { DEFAULT_SECONDARY_SHARE } from "@/lib/member-roles";
+import { DEFAULT_SECONDARY_SHARE, isTracked } from "@/lib/member-roles";
 import { ADVERTISER_LEVEL_LABEL, ROLES, ROLE_LABEL } from "@/lib/roles";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -32,9 +32,13 @@ export type EditableMember = {
   invitationPending: boolean;
   isSelf?: boolean;
   targets?: Record<number, number>;
+  /** Creative only: the advertisers they work for (empty = all). */
+  linkedAdvertiserIds?: number[];
 };
 
-export function MemberDialog({ member, onClose, metrics, period }: { member?: EditableMember; onClose?: () => void; metrics: KpiMetric[]; period: string }) {
+export type AdvertiserOption = { id: number; name: string; isActive: boolean };
+
+export function MemberDialog({ member, onClose, metrics, period, advertisers }: { member?: EditableMember; onClose?: () => void; metrics: KpiMetric[]; period: string; advertisers: AdvertiserOption[] }) {
   const router = useRouter();
   const [open, setOpen] = React.useState(!!member);
   const [state, action, pending] = useActionState(saveMember, undefined);
@@ -42,8 +46,11 @@ export function MemberDialog({ member, onClose, metrics, period }: { member?: Ed
   const [secondRole, setSecondRole] = React.useState<string>(member?.secondaryRole ?? "none");
   const [secondShare, setSecondShare] = React.useState(member?.secondaryShare ?? DEFAULT_SECONDARY_SHARE);
   // The second role can't be the main role, a supervisor, or the advertiser role (ads features follow the main role).
-  const secondOptions = ROLES.filter((r) => r !== "supervisor" && r !== "advertiser" && r !== "cso" && r !== role);
-  const second = role !== "cso" && role !== "supervisor" && secondOptions.includes(secondRole as Role) ? (secondRole as Role) : null;
+  // CSO and Creative have no KPI tracker, so they neither hold nor are a second role.
+  const untracked = !isTracked({ role });
+  const secondOptions = ROLES.filter((r) => r !== "supervisor" && r !== "advertiser" && isTracked({ role: r }) && r !== role);
+  const second = !untracked && role !== "supervisor" && secondOptions.includes(secondRole as Role) ? (secondRole as Role) : null;
+  const [linked, setLinked] = React.useState<Set<number>>(() => new Set(member?.linkedAdvertiserIds ?? []));
   const change = (o: boolean) => {
     setOpen(o);
     if (!o) onClose?.();
@@ -121,7 +128,7 @@ export function MemberDialog({ member, onClose, metrics, period }: { member?: Ed
                 </Select>
               </div>
             )}
-            {role !== "supervisor" && role !== "cso" && (
+            {role !== "supervisor" && !untracked && (
               <div className="grid gap-2">
                 <Label>Role kedua (rangkap)</Label>
                 <Select name="secondaryRole" value={second ?? "none"} onValueChange={setSecondRole}>
@@ -181,11 +188,34 @@ export function MemberDialog({ member, onClose, metrics, period }: { member?: Ed
             <input type="hidden" name="isActive" value="on" />
           ) : (
             <Label className="font-normal">
-              <Checkbox name="isActive" defaultChecked={member.isActive} value="on" /> Active — can sign in and appears in KPI
+              <Checkbox name="isActive" defaultChecked={member.isActive} value="on" /> {untracked ? "Active — can sign in" : "Active — can sign in and appears in KPI"}
             </Label>
           ))}
+          {role === "creative" && (
+            <fieldset className="grid gap-2 rounded-xl border p-4">
+              <legend className="px-1 text-sm font-medium">Creative untuk advertiser</legend>
+              <p className="text-xs text-muted-foreground">
+                Creative hanya membuka menu Creative dan Analisa AI, tanpa KPI. Centang advertiser yang dibantu: Creative hanya melihat konten iklan advertiser
+                tersebut. Tanpa centang, Creative melihat konten semua advertiser.
+              </p>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {advertisers.filter((a) => a.isActive || linked.has(a.id)).map((a) => (
+                  <Label key={a.id} className="font-normal">
+                    <Checkbox
+                      name="linkedAdvertiserIds"
+                      value={String(a.id)}
+                      checked={linked.has(a.id)}
+                      onCheckedChange={(v) => setLinked((prev) => { const next = new Set(prev); if (v === true) next.add(a.id); else next.delete(a.id); return next; })}
+                    />
+                    {a.name}{!a.isActive && <span className="text-muted-foreground"> (nonaktif)</span>}
+                  </Label>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">{linked.size ? `Tampil sebagai: Creative ${advertisers.filter((a) => linked.has(a.id)).map((a) => a.name).join(", ")}` : "Tampil sebagai: Creative semua advertiser"}</p>
+            </fieldset>
+          )}
           {role === "cso" && <div className="grid gap-2"><Label htmlFor="m-cso">Nomor WhatsApp CSO</Label><Input id="m-cso" name="csoPhone" defaultValue={member?.csoPhone ?? ""} placeholder="6281234567890" required /><p className="text-xs text-muted-foreground">Tujuan pengalihan customer dari form order.</p></div>}
-          <MemberTargetFields key={`${role}-${second}-${secondShare}-${period}`} metrics={metrics} member={{ role, secondaryRole: second, secondaryShare: secondShare }} targets={member?.targets} period={period} />
+          {!untracked && <MemberTargetFields key={`${role}-${second}-${secondShare}-${period}`} metrics={metrics} member={{ role, secondaryRole: second, secondaryShare: secondShare }} targets={member?.targets} period={period} />}
           {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => change(false)}>

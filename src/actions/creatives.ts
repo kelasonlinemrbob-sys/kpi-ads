@@ -10,22 +10,26 @@ import { saveCreativeSnapshot } from "@/lib/creative-sync";
 import { fetchMetaAdContents } from "@/lib/ads-api";
 import { requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
+import { adsScopeFor } from "@/lib/ads-scope";
+import { visibleCreativeIds } from "@/lib/creatives-data";
 import { can } from "@/lib/roles";
 
 /** Sync only ads with insights in the selected reporting window, preserving team annotations. */
 export async function syncCreatives(periodKey: string = "7d") {
-  const user = await requireUser();
+  const user = await requireUser(true);
   if (!can.viewCreatives(user.role)) return { ok: false as const, error: "Kamu tidak punya akses ke halaman Creative." };
   if (!CREATIVE_PERIODS.some((p) => p.value === periodKey)) return { ok: false as const, error: "Pilih periode 7, 14, atau 30 hari." };
   const period = creativePeriod(periodKey);
-  const accounts = await db.select().from(adAccounts).where(and(eq(adAccounts.platform, "meta"), user.role === "advertiser" ? eq(adAccounts.createdById, user.id) : undefined));
+  // An advertiser syncs the accounts their contents come from: the ones they picked and those holding their products.
+  const scope = await adsScopeFor(user);
+  const accounts = await db.select().from(adAccounts).where(and(eq(adAccounts.platform, "meta"), scope ? inArray(adAccounts.id, [...scope.accountIds, 0]) : undefined));
   if (!accounts.length) return { ok: false as const, error: "Belum ada akun Meta. Tambahkan di Campaigns → Akun iklan." };
   const results: { account: string; count: number; error: string | null }[] = [];
   // Account requests are sequential to avoid bursts against the same Meta token.
   for (const account of accounts) {
     const startedAt = new Date();
     try {
-      const res = await fetchMetaAdContents(account.accountId, period.start, period.end, account.createdById);
+      const res = await fetchMetaAdContents(account.accountId, period.start, period.end);
       if (!res.ok) { results.push({ account: account.name, count: 0, error: res.error }); continue; }
       await saveCreativeSnapshot(account.id, period.start, period.end, res.ads, startedAt);
       results.push({ account: account.name, count: res.ads.length, error: null });
@@ -57,7 +61,7 @@ export async function updateCreative(id: number, patch: z.infer<typeof patchSche
 
 /** Same, for every ad that runs one content (post). */
 export async function updateCreatives(ids: number[], patch: z.infer<typeof patchSchema>) {
-  const user = await requireUser();
+  const user = await requireUser(true);
   if (!can.viewCreatives(user.role)) return { error: "Kamu tidak punya akses ke halaman Creative." };
   const parsed = patchSchema.safeParse(patch);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Data tidak valid." };
@@ -67,6 +71,8 @@ export async function updateCreatives(ids: number[], patch: z.infer<typeof patch
     if (found.length !== new Set(people).size) return { error: "Creator / editor tidak ditemukan." };
   }
   if (!ids.length || ids.length > 500 || !ids.every((id) => Number.isInteger(id) && id > 0)) return { error: "Konten tidak valid." };
+  const scope = await adsScopeFor(user);
+  if (scope && (await visibleCreativeIds(scope, ids)).size !== new Set(ids).size) return { error: "Konten tidak ditemukan." };
   const updated = await db.update(adCreatives).set(parsed.data).where(inArray(adCreatives.id, ids)).returning({ id: adCreatives.id });
   if (!updated.length) return { error: "Konten tidak ditemukan." };
   revalidatePath("/creatives");

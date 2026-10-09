@@ -24,7 +24,7 @@ test("ownership, routing, concurrent idempotency, organic separation, cutoff, KP
   }
   const actor={id:ids[0],role:"advertiser"};const [product]=await db.insert(campaigns).values({name:`QA ${tag}`,product:"QA product",ownerId:actor.id,platform:"meta"}).returning();campaignId=product.id;
   const date=jakartaDate();const early=new Date(`${date}T10:00:00+07:00`),late=new Date(`${date}T23:59:00+07:00`);
-  const data={campaignId,title:"QA registration",description:"",fields:DEFAULT_ORDER_FIELDS,routing:"round_robin",assigneeIds:[ids[2],ids[3]],published:true,source:"ads",message:"Halo CSO",useFormLeads:true,effectiveDate:date};
+  const data={campaignId,title:"QA registration",description:"",fields:DEFAULT_ORDER_FIELDS,routing:"round_robin",assigneeIds:[ids[2],ids[3]],published:true,source:"ads",message:"Halo, saya {{nama}} / {{name}} dari {{kota}}, tanya {{produk}}. Ref {{referensi}}",useFormLeads:true,effectiveDate:date};
   await assert.rejects(()=>db.transaction(tx=>saveOrderForm(tx,{id:ids[1],role:"advertiser"},data)),/Produk/);
   await assert.rejects(()=>db.transaction(tx=>saveOrderForm(tx,{id:ids[2],role:"cso"},data)),/akses/);
   await assert.rejects(()=>db.transaction(tx=>saveOrderForm(tx,actor,{...data,assigneeIds:[ids[1]]})),/CSO aktif/);
@@ -35,6 +35,11 @@ test("ownership, routing, concurrent idempotency, organic separation, cutoff, KP
   assert.equal(pair[0].reference,pair[1].reference);
   let leads=await db.select().from(orderLeads).where(eq(orderLeads.formId,form.id));assert.equal(leads.length,1);assert.equal(leads[0].assigneeId,ids[2]);assert.equal(leads[0].ownerId,actor.id);
   assert.ok(pair[0].url.startsWith("https://wa.me/6281234567890?text="));
+  const chat=new URL(pair[0].url).searchParams.get("text")!;
+  assert.ok(chat.startsWith(`Halo, saya Customer / Customer dari Malang, tanya QA product. Ref ${pair[0].reference}\n`));
+  assert.ok(chat.includes("No. HP: 6281234560000"));
+  assert.equal(leads[0].whatsappUrl,pair[0].url);
+  assert.equal(pair[1].url,pair[0].url,"idempotent retries retain the rendered message");
   await assert.rejects(()=>db.transaction(tx=>submitOrderLead(tx,form.slug,createFormChallenge(form.slug,early.getTime()),raw,{},early)),/sudah terdaftar/);
   await db.transaction(tx=>submitOrderLead(tx,form.slug,createFormChallenge(form.slug,early.getTime()),{...raw,phone:"081234560001"},{utm_source:"facebook"},early));
   leads=await db.select().from(orderLeads).where(eq(orderLeads.formId,form.id));assert.equal(leads.length,2);assert.equal(leads.find(r=>r.phone==="6281234560001")?.assigneeId,ids[3]);

@@ -18,7 +18,8 @@ import {
 import { logout } from "@/actions/auth";
 import type { AdvertiserLevel, Role } from "@/db/schema";
 import { cn } from "@/lib/utils";
-import { roleLabel } from "@/lib/roles";
+import { homePath, roleLabel } from "@/lib/roles";
+import { IntentLink } from "@/components/intent-link";
 import { Logo } from "@/components/logo";
 import { useTheme } from "@/components/theme-provider";
 import { UserAvatar } from "@/components/user-avatar";
@@ -36,7 +37,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { breadcrumbFor, buildNav, type NavCounts, type NavItem, type NavSection } from "./nav";
 import { CommandMenu } from "./command-menu";
 
-export type ShellUser = { id: number; name: string; avatarId: number | null; email: string; role: Role; advertiserLevel: AdvertiserLevel | null };
+export type ShellUser = { id: number; name: string; avatarId: number | null; email: string; role: Role; advertiserLevel: AdvertiserLevel | null; secondaryRole?: Role | null };
 
 export function AppShell({ user, counts, children }: { user: ShellUser; counts: NavCounts; children: React.ReactNode }) {
   const [collapsed, setCollapsed] = React.useState(false);
@@ -46,7 +47,7 @@ export function AppShell({ user, counts, children }: { user: ShellUser; counts: 
   const searchParams = useSearchParams();
   const currentQuery=searchParams.toString();
   const senior = user.role === "advertiser" && user.advertiserLevel === "senior";
-  const nav = React.useMemo(() => buildNav(user.role, counts, senior), [user.role, counts, senior]);
+  const nav = React.useMemo(() => buildNav(user.role, counts, senior, user.secondaryRole ?? null), [user.role, counts, senior, user.secondaryRole]);
 
   React.useEffect(() => {
     try {
@@ -130,17 +131,20 @@ function SidebarContent({
   return (
     <div className="flex h-full min-h-0 flex-col px-2.5 pt-3 pb-2.5">
       <div className={cn("flex items-center px-1.5", collapsed ? "flex-col gap-3" : "justify-between")}>
-        <Link href={user.role==="cso"?"/leads":"/dashboard"} aria-label="KPI Ads home">
+        <Link href={homePath(user.role)} aria-label="KPI Ads home">
           <Logo collapsed={collapsed} />
         </Link>
-        <button
-          type="button"
-          onClick={onToggle}
-          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          aria-label="Toggle sidebar"
-        >
-          <PanelLeftIcon className="size-4" />
-        </button>
+        <div className={cn("flex items-center gap-0.5", collapsed && "flex-col gap-1")}>
+          <SidebarThemeButton />
+          <button
+            type="button"
+            onClick={onToggle}
+            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            aria-label="Toggle sidebar"
+          >
+            <PanelLeftIcon className="size-4" />
+          </button>
+        </div>
       </div>
       <div className="dashed-divider my-2.5" />
 
@@ -171,16 +175,34 @@ function SidebarContent({
   );
 }
 
+/** Dark / light switch next to the logo; same preference as Pengaturan → Tampilan. */
+function SidebarThemeButton() {
+  const { dark, toggle } = useTheme();
+  const label = dark ? "Ganti ke mode terang" : "Ganti ke mode gelap";
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      aria-label={label}
+      title={label}
+    >
+      {dark ? <SunIcon className="size-4" /> : <MoonIcon className="size-4" />}
+    </button>
+  );
+}
+
 function SidebarSection({section,collapsed,userId}:{section:NavSection;collapsed:boolean;userId:number}){
  const isActive=useIsActive();const active=section.items.some(item=>isActive(item.href)||item.children?.some(child=>isActive(child.href)));
  const pathname=usePathname();const search=useSearchParams();const route=pathname+"?"+search.toString();
- const [open,setOpen]=React.useState(active||section.label==="Utama");
+ const byDefault=section.label==="Utama"||!!section.defaultOpen;
+ const [open,setOpen]=React.useState(active||byDefault);
  const key=`sidebar-section:${userId}:${section.label}`;
- React.useEffect(()=>{try{const value=localStorage.getItem(key);setOpen(active||value==="open"||(value===null&&section.label==="Utama"));}catch{setOpen(active||section.label==="Utama");}},[key,route,active,section.label]);
+ React.useEffect(()=>{try{const value=localStorage.getItem(key);setOpen(active||value==="open"||(value===null&&byDefault));}catch{setOpen(active||byDefault);}},[key,route,active,byDefault]);
  const count=section.items.reduce((sum,item)=>sum+(item.badge??0)+(item.children?.reduce((n,c)=>n+(c.badge??0),0)??0),0);
  const items=<ul className="grid gap-0.5">{section.items.map(item=><NavLink key={item.title} item={item} collapsed={collapsed} />)}</ul>;
  if(collapsed)return <div className="mt-3 first:mt-1"><div className="dashed-divider mx-2 mb-2" />{items}</div>;
- return <Collapsible open={open} onOpenChange={value=>{setOpen(value);try{localStorage.setItem(key,value?"open":"closed");}catch{}}} className="mt-3 first:mt-1"><CollapsibleTrigger className="mb-1 flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[11px] font-semibold tracking-wide text-muted-foreground hover:bg-accent hover:text-foreground"><span className={cn("size-1.5 rounded-full",active?"bg-primary":"bg-muted-foreground/30")} /><span className="flex-1 uppercase">{section.label}</span>{!open&&count>0&&<CountBadge n={count} />}<ChevronDownIcon className={cn("size-3.5 transition-transform",open&&"rotate-180")} /></CollapsibleTrigger><CollapsibleContent>{items}</CollapsibleContent></Collapsible>;
+ return <Collapsible open={open} onOpenChange={value=>{setOpen(value);try{localStorage.setItem(key,value?"open":"closed");}catch{}}} className="mt-3 first:mt-1"><CollapsibleTrigger className="mb-1 flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[11px] font-semibold tracking-wide text-muted-foreground hover:bg-accent hover:text-foreground"><span className={cn("size-1.5 rounded-full",active?"bg-primary":"bg-muted-foreground/30")} /><span className="flex flex-1 items-center gap-1.5 uppercase">{section.label}{section.tag&&<span className="rounded bg-info/10 px-1.5 py-px text-[9px] font-medium tracking-normal text-info normal-case">{section.tag}</span>}</span>{!open&&count>0&&<CountBadge n={count} />}<ChevronDownIcon className={cn("size-3.5 transition-transform",open&&"rotate-180")} /></CollapsibleTrigger><CollapsibleContent>{items}</CollapsibleContent></Collapsible>;
 }
 
 function useIsActive() {
@@ -192,14 +214,14 @@ function useIsActive() {
       const q = new URLSearchParams(query);
       return pathname === path && [...q].every(([k, v]) => search.get(k) === v);
     }
-    if (exact) return pathname === path && !search.get("status") && !search.get("view");
+    if (exact) return pathname === path && !search.get("status") && !search.get("view") && !search.get("tab");
     return pathname === path || pathname.startsWith(`${path}/`);
   };
 }
 
 function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
   const isActive = useIsActive();
-  const active = isActive(item.href) || !!item.children?.some((c) => isActive(c.href));
+  const active = isActive(item.href, item.exact) || !!item.children?.some((c) => isActive(c.href));
   const [open, setOpen] = React.useState(active);
   const pathname=usePathname();const search=useSearchParams();const route=pathname+"?"+search.toString();
   React.useEffect(()=>{if(active)setOpen(true);},[active,route]);
@@ -218,14 +240,15 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
       <li>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Link
+            <IntentLink
               href={item.href}
+              current={active}
               aria-current={active?"page":undefined}
               className={cn(base, active && "bg-card text-foreground ring-1 ring-border")}
             >
               <Icon className="size-4" />
               <span className="sr-only">{item.title}</span>
-            </Link>
+            </IntentLink>
           </TooltipTrigger>
           <TooltipContent side="right">{item.title}</TooltipContent>
         </Tooltip>
@@ -236,11 +259,11 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
   if (!item.children) {
     return (
       <li>
-        <Link href={item.href} className={base} aria-current={active ? "page" : undefined}>
+        <IntentLink href={item.href} current={active} className={base} aria-current={active ? "page" : undefined}>
           <Icon className="size-4 shrink-0" />
           <span className="flex-1 truncate">{item.title}</span>
           {!!item.badge && <CountBadge n={item.badge} />}
-        </Link>
+        </IntentLink>
       </li>
     );
   }
@@ -264,8 +287,9 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
                   <span aria-hidden className={cn("absolute left-[17px] top-0 w-px bg-border", last ? "h-1/2" : "h-full")} />
                   <span aria-hidden className="absolute top-1/2 left-[17px] h-px w-2 bg-border" />
                   <span aria-hidden className="absolute top-1/2 left-[25px] size-[5px] -translate-y-1/2 rounded-full border border-muted-foreground/60 bg-sidebar" />
-                  <Link
+                  <IntentLink
                     href={child.href}
+                    current={childActive}
                     className={cn(
                       "flex h-7 items-center gap-2 rounded-md px-2 text-[13px] transition-colors",
                       childActive ? "font-medium text-foreground" : "text-foreground/70 hover:text-foreground",
@@ -274,7 +298,7 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
                   >
                     <span className="flex-1 truncate">{child.title}</span>
                     {!!child.badge && <CountBadge n={child.badge} />}
-                  </Link>
+                  </IntentLink>
                 </li>
               );
             })}

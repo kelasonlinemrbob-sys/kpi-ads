@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { KpiMetric } from "@/db/schema";
-import { aggregate, scoreMember, type Entry } from "./kpi";
+import { aggregate, comparableRange, monthWindow, previousWindow, rangeWindow, scoreMember, windowSlices, type Entry } from "./kpi";
 import { taskCompletionAt } from "./task-kpi";
 import { validTarget } from "./target-rules";
 
@@ -100,4 +100,73 @@ test("target validation enforces SEO minima and exactly 100% completion", () => 
   assert.equal(validTarget("task_completion", 101), false);
   assert.equal(validTarget("cplv", null, true), true);
   assert.equal(validTarget("leads", Infinity), false);
+});
+
+test("date windows: month matches the old pacing, ranges compare with the same length right before", () => {
+  const month = { ...monthWindow("2026-02"), asOf: "2026-02-14" };
+  const prevMonth = previousWindow(month);
+  const old = comparableRange("2026-02", "2026-02-14");
+  assert.deepEqual([prevMonth.start, prevMonth.asOf, prevMonth.month], [old.start, old.end, old.period]);
+  // March 31 → February has only 28 days, like comparableRange.
+  assert.equal(previousWindow({ ...monthWindow("2026-03"), asOf: "2026-03-31" }).asOf, "2026-02-28");
+
+  const running = rangeWindow("2026-10-01", "2026-10-14", "2026-10-07");
+  assert.deepEqual([running.asOf, running.days, running.month], ["2026-10-07", 14, "2026-10"]);
+  const prev = previousWindow(running);
+  assert.deepEqual([prev.start, prev.end, prev.asOf], ["2026-09-17", "2026-09-30", "2026-09-23"]);
+  assert.equal(rangeWindow("2026-11-01", "2026-11-05", "2026-10-07").asOf, "2026-11-01");
+
+  assert.deepEqual(windowSlices({ start: "2026-09-15", end: "2026-10-07" }), [
+    { month: "2026-09", days: 16, monthDays: 30 },
+    { month: "2026-10", days: 7, monthDays: 31 },
+  ]);
+});
+
+test("custom range: monthly totals prorated per month, daily standards per day, averages weighted", () => {
+  const window = { start: "2026-09-15", end: "2026-10-07" };
+  const slices = windowSlices(window).map((sl, i) => ({ days: sl.days, monthDays: sl.monthDays, targets: new Map(i === 1 ? [[1, 620]] : []) }));
+  const monthly = metric({ targetMode: "monthly", defaultTarget: 300 });
+  // September default 300 × 16/30 = 160, October override 620 × 7/31 = 140.
+  const r = score(monthly, [entry(1, 150, "2026-09-20")], { period: "2026-10", asOf: "2026-10-07", window, targetSlices: slices });
+  assert.equal(Math.round(r.results[0]!.target!), 300);
+  assert.equal(Math.round(r.results[0]!.expected!), 300);
+  assert.equal(r.score, 50);
+
+  const daily = score(metric(), [], { period: "2026-10", asOf: "2026-10-07", window, targetSlices: slices.map((sl) => ({ ...sl, targets: new Map() })) });
+  assert.equal(daily.results[0]!.target, 23);
+
+  const average = metric({ aggregation: "avg", targetMode: "monthly", unit: "percent" });
+  const avg = score(average, [], { period: "2026-10", asOf: "2026-10-07", window, targetSlices: [
+    { days: 16, monthDays: 30, targets: new Map([[1, 2]]) },
+    { days: 7, monthDays: 31, targets: new Map([[1, 4.3]]) },
+  ] });
+  assert.equal(Math.round(avg.results[0]!.target! * 100) / 100, 2.7);
+
+  // Pacing: half-way through a running range, sum metrics expect half the target.
+  const pacing = score(monthly, [], { period: "2026-10", asOf: "2026-10-04", window: { start: "2026-10-01", end: "2026-10-08" }, targetSlices: [{ days: 8, monthDays: 31, targets: new Map([[1, 310]]) }] });
+  assert.equal(pacing.results[0]!.target, 80);
+  assert.equal(pacing.results[0]!.expected, 40);
+});
+
+test("dashboard date filter: rolling ranges, custom ranges clamped to today and 366 days, bad input falls back", async () => {
+  const { resolveDateWindow, rangeLabel } = await import("./period");
+  const today = "2026-10-07";
+  const week = resolveDateWindow({ range: "7d" }, today);
+  assert.deepEqual([week.window.start, week.window.end, week.label, week.compareLabel, week.query], ["2026-10-01", "2026-10-07", "Last 7 days", "vs previous 7 days", "range=7d"]);
+
+  const custom = resolveDateWindow({ from: "2026-09-15", to: "2026-12-31" }, today);
+  assert.deepEqual([custom.window.start, custom.window.end, custom.window.days, custom.label], ["2026-09-15", "2026-10-07", 23, "Sep 15 – Oct 7, 2026"]);
+  assert.equal(custom.query, "from=2026-09-15&to=2026-10-07");
+  assert.equal(custom.compareLabel, "vs previous 23 days");
+
+  const long = resolveDateWindow({ from: "2024-01-01", to: "2026-10-07" }, today);
+  assert.deepEqual([long.window.start, long.window.days], ["2025-10-07", 366]);
+
+  for (const bad of [{ from: "2026-10-05", to: "2026-10-01" }, { from: "2026-02-30", to: "2026-03-02" }, { from: "2026-11-01", to: "2026-11-05" }, { range: "365d" }, { from: "x", to: "y" }]) {
+    const r = resolveDateWindow(bad, today);
+    assert.equal(r.selection.type, "month", JSON.stringify(bad));
+    assert.equal(r.compareLabel, "vs last month");
+  }
+  assert.equal(rangeLabel("2025-12-20", "2026-01-05"), "Dec 20, 2025 – Jan 5, 2026");
+  assert.equal(rangeLabel("2026-10-03", "2026-10-03"), "Oct 3, 2026");
 });

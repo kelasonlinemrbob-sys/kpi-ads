@@ -3,7 +3,8 @@
 import * as React from "react";
 import { ClipboardListIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import type { WebmasterTaskSnapshot } from "@/db/schema";
-import { WEBMASTER_CATEGORIES, WEBMASTER_STATUS_LABEL, type WebmasterItemInput, type WebmasterTaskOption } from "@/lib/webmaster-report";
+import { WEBMASTER_CATEGORIES, WEBMASTER_STATUS_LABEL } from "@/lib/webmaster-constants";
+import type { WebmasterItemInput, WebmasterTaskOption } from "@/lib/webmaster-report";
 import { categoryLabel } from "@/lib/task-rules";
 import { PRIORITY_LABEL } from "@/lib/labels";
 import { Panel } from "@/components/dashboard/panel";

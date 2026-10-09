@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { CircleDashedIcon, CircleDotIcon, CirclePauseIcon, CircleXIcon, ExternalLinkIcon, ImageIcon, PlayIcon, type LucideIcon } from "lucide-react";
+import { CircleDashedIcon, CircleDotIcon, CirclePauseIcon, CircleXIcon, ExternalLinkIcon, ImageIcon, PlayIcon, SparklesIcon, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { updateCreatives } from "@/actions/creatives";
 import type { AdCreative } from "@/db/schema";
@@ -19,8 +19,11 @@ import type { CreativePost } from "@/lib/creatives-data";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ContentAiAnalysis } from "./content-ai-analysis";
 
 type Person = { id: number; name: string; creative: boolean };
+/** Who may run "Analisa creative": canRun = allowed and the team's Kie key is set, needsKey = allowed but no key yet, canSetup = supervisor. */
+type AiAccess = { period: string; modelLabel: string; canRun: boolean; needsKey: boolean; canSetup: boolean; analysedKeys: string[] };
 
 const STATUS_ICON: Record<AdCreative["status"], LucideIcon> = {
   active: CircleDotIcon,
@@ -30,7 +33,7 @@ const STATUS_ICON: Record<AdCreative["status"], LucideIcon> = {
 };
 
 /** One card per content (post); ads that run the same post are summed. */
-export function CreativeGallery({ posts, people }: { posts: CreativePost[]; people: Person[] }) {
+export function CreativeGallery({ posts, people, ai }: { posts: CreativePost[]; people: Person[]; ai: AiAccess }) {
   const [openKey, setOpenKey] = React.useState<string | null>(null);
   const open = posts.find((p) => p.key === openKey) ?? null;
   const nameOf = (id: number | null) => (id ? (people.find((p) => p.id === id)?.name ?? null) : null);
@@ -67,6 +70,11 @@ export function CreativeGallery({ posts, people }: { posts: CreativePost[]; peop
                 <span className="absolute top-2 right-2 inline-flex items-center gap-1 rounded-md bg-background/90 px-1.5 py-0.5 text-[11px]">
                   <StatusIcon className="size-3" /> {CREATIVE_STATUS_LABEL[post.status]}
                 </span>
+                {ai.analysedKeys.includes(post.key) && (
+                  <span title="Sudah dianalisa AI" className="absolute right-2 bottom-2 inline-flex items-center gap-1 rounded-md bg-background/90 px-1.5 py-0.5 text-[11px]">
+                    <SparklesIcon className="size-3" /> AI
+                  </span>
+                )}
                 {post.label && (
                   <span
                     className={cn(
@@ -101,7 +109,7 @@ export function CreativeGallery({ posts, people }: { posts: CreativePost[]; peop
           );
         })}
       </div>
-      {open && <CreativeDetail post={open} people={people} onClose={() => setOpenKey(null)} />}
+      {open && <CreativeDetail post={open} people={people} ai={ai} onClose={() => setOpenKey(null)} />}
     </>
   );
 }
@@ -115,7 +123,7 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function CreativeDetail({ post, people, onClose }: { post: CreativePost; people: Person[]; onClose: () => void }) {
+function CreativeDetail({ post, people, ai, onClose }: { post: CreativePost; people: Person[]; ai: AiAccess; onClose: () => void }) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
   const [draft, setDraft] = React.useState({
@@ -302,6 +310,17 @@ function CreativeDetail({ post, people, onClose }: { post: CreativePost; people:
             </div>
           </div>
         </div>
+
+        <ContentAiAnalysis
+          postKey={post.key}
+          period={ai.period}
+          modelLabel={ai.modelLabel}
+          canRun={ai.canRun}
+          needsKey={ai.needsKey}
+          canSetup={ai.canSetup}
+          currentLabel={draft.label}
+          onApplyLabel={(label) => save({ label }, { label })}
+        />
       </DialogContent>
     </Dialog>
   );

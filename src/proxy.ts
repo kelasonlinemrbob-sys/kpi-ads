@@ -5,7 +5,8 @@ export function proxy(req: NextRequest) {
   const hasSession = req.cookies.has("kpi_session");
   const { pathname } = req.nextUrl;
   const publicForm = pathname.startsWith("/f/") || pathname === "/embed/order.js";
-  if (!hasSession && !publicForm && !["/login", "/forgot-password", "/reset-password", "/accept-invitation"].includes(pathname)) {
+  // The application homepage and privacy policy must be readable without a session for OAuth review.
+  if (!hasSession && !publicForm && !["/", "/robots.txt", "/sitemap.xml", "/login", "/forgot-password", "/reset-password", "/accept-invitation", "/privacy-policy"].includes(pathname)) {
     return NextResponse.redirect(new URL("/login", req.url));
   }
   const response = NextResponse.next();

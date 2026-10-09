@@ -172,7 +172,7 @@ export default async function NewReportPage({
         description={
           dualRole
             ? `Isi angka KPI ${ROLE_LABEL[role]} hari ini. Bagian ini masuk ke laporan harian yang sama dengan role lainnya dan direview supervisor.`
-            : role === "seo" ? "Laporkan SEO Score, artikel, impression, dan klik hari ini. Pantau pencapaian target sebelum mengirim." : role === "webmaster" ? "Catat task harian, status pengerjaan, kategori, dan hasil pekerjaan. Target penyelesaian task 100%." : "Enter today's numbers and a short summary. Your KPI score updates as soon as you submit."
+            : role === "seo" ? "Ambil klik dan impresi dari Google Search Console, isi SEO Score dan artikel, tulis aktivitas, lalu kirim." : role === "webmaster" ? "Catat task harian, status pengerjaan, kategori, dan hasil pekerjaan. Target penyelesaian task 100%." : "Enter today's numbers and a short summary. Your KPI score updates as soon as you submit."
         }
       />
       {roleTabs}

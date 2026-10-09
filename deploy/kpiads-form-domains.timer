@@ -1,0 +1,10 @@
+[Unit]
+Description=Check pending KPI Ads form domains every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=1min
+Unit=kpiads-form-domains.service
+
+[Install]
+WantedBy=timers.target

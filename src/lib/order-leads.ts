@@ -9,6 +9,7 @@ import { normalizePhone, orderFormInput, validateCustomer, type LEAD_STATUSES } 
 import { DEFAULT_REPORT_RULES } from "./reporting";
 import { jakartaDate } from "./sheets-report";
 import { weightedRecipient, leadCommerceSchema, type LeadCommerce } from "./order-form-config";
+import { buildOrderMessage } from "./order-message";
 export type LeadDb = Pick<typeof db,"select"|"insert"|"update"|"delete">;
 export class LeadError extends Error {}
 export const leadErrorMessage = (error: unknown) => error instanceof LeadError ? error.message : "Permintaan belum dapat diproses. Silakan coba lagi.";
@@ -32,7 +33,7 @@ export async function saveOrderForm(tx: LeadDb, actor: {id:number;role:string}, 
   const parsed=orderFormInput.safeParse(input);if(!parsed.success) throw new LeadError(parsed.error.issues[0].message);
   const data=parsed.data;
   const [old]=data.id ? await tx.select().from(orderForms).where(eq(orderForms.id,data.id)).for("update") : [];
-  if(data.id && (!old || (actor.role!=="supervisor" && old.ownerId!==actor.id))) throw new LeadError("Form tidak ditemukan.");
+  if(data.id && (!old || old.deletedAt || (actor.role!=="supervisor" && old.ownerId!==actor.id))) throw new LeadError("Form tidak ditemukan.");
   if(old && (old.campaignId!==data.campaignId || old.source!==data.source)) throw new LeadError("Produk dan sumber form tidak dapat diganti. Buat form baru untuk menjaga riwayat lead.");
   const [product]=await tx.select().from(campaigns).where(eq(campaigns.id,data.campaignId)).for("update");
   if(!product || (actor.role!=="supervisor" && product.ownerId!==actor.id) || (old && old.ownerId!==product.ownerId)) throw new LeadError("Produk tidak sesuai pemilik advertiser.");
@@ -76,7 +77,7 @@ export async function syncFormLeadItems(tx: LeadDb, campaignId:number, date:stri
 export async function submitOrderLead(tx: LeadDb, slug:string, token:string, raw:Record<string,unknown>, attribution:Record<string,string>={}, now=new Date(), context:CapiContext={}) {
   const requestHash=verifyFormChallenge(slug,token,now.getTime());
   const [form]=await tx.select().from(orderForms).where(eq(orderForms.slug,slug)).for("update");
-  if(!form) throw new LeadError("Form tidak tersedia.");
+  if(!form || form.deletedAt) throw new LeadError("Form tidak tersedia.");
   const [retry]=await tx.select().from(orderLeads).where(and(eq(orderLeads.formId,form.id),eq(orderLeads.requestHash,requestHash)));
   if(retry)return {reference:retry.publicId,url:retry.whatsappUrl,repeated:true,meta:retry.metaTracking};
   if(!form.published)throw new LeadError("Form sedang tidak menerima pendaftaran.");
@@ -94,7 +95,7 @@ export async function submitOrderLead(tx: LeadDb, slug:string, token:string, raw
   if(!chosen)throw new LeadError("CSO belum tersedia. Silakan coba lagi nanti.");
   let phone;try{phone=normalizePhone(chosen.csoPhone!);}catch{throw new LeadError("Nomor CSO belum tersedia.");}
   const reference=randomUUID();
-  const message=[form.message,`Produk: ${product.product||product.name}`,customer.name&&`Nama: ${customer.name}`,customer.phone&&`No. HP: ${customer.phone}`,customer.email&&`Email: ${customer.email}`,customer.city&&`Kota: ${customer.city}`,`Referensi: ${reference}`].filter(Boolean).join("\n");
+  const message=buildOrderMessage(form.message,{customer,product:product.product||product.name,reference});
   const url=`https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
   const [lead]=await tx.insert(orderLeads).values({measurementConsent:raw.trackingConsent===true,publicId:reference,formId:form.id,ownerId:form.ownerId,campaignId:product.id,assigneeId:chosen.id,csoPhone:phone,product:product.product||product.name,source:form.source,platform:form.source==="organic"?"organic":product.platform,...customer,date,requestHash,contactHash,whatsappUrl:url,attribution,createdAt:now,updatedAt:now}).returning();
   const meta=await queueCapiLead(tx,form,lead,context);

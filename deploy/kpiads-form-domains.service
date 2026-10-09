@@ -1,0 +1,10 @@
+[Unit]
+Description=Verify form domains and provision isolated HTTPS vhosts
+After=network-online.target postgresql.service nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/kpiads-form-domains.py
+TimeoutStartSec=10min
+UMask=0027

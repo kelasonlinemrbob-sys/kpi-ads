@@ -1,7 +1,8 @@
 import "server-only";
 import { getMetaToken, META_API_VERSION, META_TOKEN_MISSING, metaErrorMessage, type MetaApiError } from "./meta-connection";
 import { creativePeriod, validCreativeRange } from "./creative-period";
-const META_LEAD_ACTIONS = (process.env.META_LEAD_ACTION_TYPES ?? "lead,onsite_conversion.lead_grouped,offsite_conversion.fb_pixel_lead").split(",").map((v) => v.trim()).filter(Boolean);
+import { META_RESULT_FIELDS, metaLeads, type MetaResult } from "./meta-results";
+export { leadCount } from "./meta-results";
 
 export type AdContent = {
   adId: string;
@@ -56,6 +57,8 @@ type MetaAdInsight = {
   actions?: { action_type: string; value: string }[];
   video_thruplay_watched_actions?: { action_type: string; value: string }[];
   video_avg_time_watched_actions?: { action_type: string; value: string }[];
+  objective?: string;
+  results?: MetaResult[];
 };
 
 function contentStatus(effective: string): AdContent["status"] {
@@ -100,16 +103,16 @@ async function request(url: URL) {
 }
 
 /** Request one aggregate window, page cautiously, then fetch metadata ONLY for ads in that window. */
-export async function fetchMetaAdContents(accountId: string, start: string, end: string, userId: number | null): Promise<AdContentResult> {
+export async function fetchMetaAdContents(accountId: string, start: string, end: string): Promise<AdContentResult> {
   if (!validCreativeRange(start, end)) return { ok: false, error: "Periode Creative harus valid dan maksimal 30 hari." };
-  const token = await getMetaToken(userId);
+  const token = await getMetaToken();
   if (!token) return { ok: false, error: META_TOKEN_MISSING };
   const root = `https://graph.facebook.com/${META_API_VERSION}`;
   const insightsUrl = new URL(`${root}/act_${accountId.replace(/\D/g, "")}/insights`);
   insightsUrl.searchParams.set("access_token", token);
   insightsUrl.searchParams.set("level", "ad");
   insightsUrl.searchParams.set("time_range", JSON.stringify({ since: start, until: end }));
-  insightsUrl.searchParams.set("fields", "ad_id,ad_name,campaign_id,campaign_name,impressions,reach,spend,inline_link_clicks,actions,video_thruplay_watched_actions,video_avg_time_watched_actions");
+  insightsUrl.searchParams.set("fields", `ad_id,ad_name,campaign_id,campaign_name,impressions,reach,spend,inline_link_clicks,actions,video_thruplay_watched_actions,video_avg_time_watched_actions,${META_RESULT_FIELDS}`);
   let limit = 50;
   const byAd = new Map<string, MetaAdInsight>();
   try {
@@ -155,7 +158,6 @@ export async function fetchMetaAdContents(accountId: string, start: string, end:
     const firstValue = (list?: { value: string }[]) => list?.length ? Number(list[0]!.value) : null;
     const ads = ids.map((id): AdContent => {
       const ad = metadata.get(id)!; const stats = byAd.get(id)!;
-      const lead = META_LEAD_ACTIONS.map((type) => stats.actions?.find((a) => a.action_type === type)).find(Boolean);
       const storyId = ad.creative?.effective_object_story_id ?? null;
       return {
         adId: id, adName: ad.name || stats.ad_name || id,
@@ -167,7 +169,7 @@ export async function fetchMetaAdContents(accountId: string, start: string, end:
         impressions: Number(stats.impressions ?? 0), reach: Number(stats.reach ?? 0),
         videoViews: Number(stats.actions?.find((a) => a.action_type === "video_view")?.value ?? 0),
         thruplays: firstValue(stats.video_thruplay_watched_actions) ?? 0, avgPlayTime: firstValue(stats.video_avg_time_watched_actions),
-        spend: Number(stats.spend ?? 0), clicks: Number(stats.inline_link_clicks ?? 0), leads: Number(lead?.value ?? 0),
+        spend: Number(stats.spend ?? 0), clicks: Number(stats.inline_link_clicks ?? 0), leads: metaLeads({ ...stats, objective: stats.objective ?? ad.campaign?.objective }),
       };
     });
     return { ok: true, ads };

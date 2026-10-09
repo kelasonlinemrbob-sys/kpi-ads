@@ -56,6 +56,60 @@ export function comparableRange(period: string, asOf: string) {
   return { start, end: addDays(start, Math.min(elapsed, days) - 1), period: prev };
 }
 
+// ---------- date windows (a month or a custom range) ----------
+
+/** Days from `start` to `end`, both included. */
+export function daysInclusive(start: string, end: string) {
+  return Math.round((parseISODate(end).getTime() - parseISODate(start).getTime()) / 86_400_000) + 1;
+}
+
+/**
+ * The dates a dashboard reads: a calendar month or any range. `asOf` is the last day that counts
+ * (today while the window is running); `month` is the month of `asOf`, for month-only pages and targets.
+ */
+export type DateWindow = { kind: "month" | "range"; start: string; end: string; asOf: string; days: number; month: string };
+
+export function monthWindow(period: string): DateWindow {
+  const { start, end, days } = periodRange(period);
+  return { kind: "month", start, end, asOf: periodAsOf(period), days, month: period };
+}
+
+export function rangeWindow(start: string, end: string, today = todayISO()): DateWindow {
+  const asOf = today < start ? start : today < end ? today : end;
+  return { kind: "range", start, end, asOf, days: daysInclusive(start, end), month: asOf.slice(0, 7) };
+}
+
+/**
+ * What a window is compared with: the previous month for a month (same elapsed days, like
+ * comparableRange), else the range of the same length right before it.
+ */
+export function previousWindow(w: DateWindow): DateWindow {
+  const elapsed = daysInclusive(w.start, w.asOf);
+  if (w.kind === "month") {
+    const prev = monthWindow(shiftPeriod(w.month, -1));
+    return { ...prev, asOf: addDays(prev.start, Math.min(elapsed, prev.days) - 1) };
+  }
+  const start = addDays(w.start, -w.days);
+  const end = addDays(w.start, -1);
+  const asOf = addDays(start, elapsed - 1);
+  return { kind: "range", start, end, asOf, days: w.days, month: asOf.slice(0, 7) };
+}
+
+/** How many of the window's days fall in each calendar month — monthly targets are prorated by it. */
+export function windowSlices(w: Pick<DateWindow, "start" | "end">) {
+  const slices: { month: string; days: number; monthDays: number }[] = [];
+  for (let month = w.start.slice(0, 7); month <= w.end.slice(0, 7); month = shiftPeriod(month, 1)) {
+    const r = periodRange(month);
+    const from = r.start > w.start ? r.start : w.start;
+    const to = r.end < w.end ? r.end : w.end;
+    slices.push({ month, days: daysInclusive(from, to), monthDays: r.days });
+  }
+  return slices;
+}
+
+/** A month's targets and how many of its days the window covers. */
+export type TargetSlice = { days: number; monthDays: number; targets: Map<number, number> };
+
 // ---------- aggregation ----------
 
 export function aggregate(
@@ -129,27 +183,21 @@ export function scoreMember(opts: {
   asOf: string;
   /** Scales default targets for someone who spends only part of their time on this role (0.6 = 60%). */
   targetScale?: number;
+  /** A custom range instead of the whole `period` month. */
+  window?: { start: string; end: string };
+  /** Targets of every month the window touches; defaults to `targets` for the whole window. */
+  targetSlices?: TargetSlice[];
 }): { score: number | null; results: MetricResult[] } {
-  const { start, days } = periodRange(opts.period);
-  const elapsed = Math.max(1, Math.round((parseISODate(opts.asOf).getTime() - parseISODate(start).getTime()) / 86_400_000) + 1);
+  const { start, end } = opts.window ?? periodRange(opts.period);
+  const days = daysInclusive(start, end);
+  const elapsed = Math.max(1, daysInclusive(start, opts.asOf));
   const fraction = Math.min(1, elapsed / days);
   const byKey = new Map(opts.allMetrics.map((m) => [m.key, m]));
+  const slices = opts.targetSlices ?? [{ days, monthDays: days, targets: opts.targets }];
 
   const results: MetricResult[] = opts.metrics.map((metric) => {
     const actual = aggregate(metric, opts.entries, byKey);
-    // A per-member override is taken as-is; the default target shrinks with the member's share of the role.
-    const override = opts.targets.get(metric.id);
-    const configured = override ?? metric.defaultTarget;
-    let target = configured;
-    if (configured !== null) {
-      if (metric.targetMode === "growth") {
-        const baseline = aggregate(metric, opts.previousEntries ?? [], byKey);
-        target = baseline !== null && baseline > 0 ? baseline * (1 + configured / 100) : null;
-      } else {
-        target = configured * (metric.targetMode === "daily" ? days : 1);
-        if (override === undefined) target = scaleTarget(metric, target, opts.targetScale ?? 1);
-      }
-    }
+    const target = windowTarget(metric, slices, opts.previousEntries ?? [], byKey, opts.targetScale ?? 1);
     const expected = target === null ? null : metric.aggregation === "sum" ? target * fraction : target;
     const unavailable = actual === null && (metric.key === "task_completion" || metric.key === "cplv");
     return { metric, actual, target, expected, achievement: unavailable ? null : achievementOf(metric, actual, expected) };
@@ -163,6 +211,39 @@ export function scoreMember(opts: {
     totalWeight += r.metric.weight;
   }
   return { score: totalWeight ? (weighted / totalWeight) * 100 : null, results };
+}
+
+/**
+ * The target over the window. A per-member override is taken as-is; the default shrinks with the
+ * member's share of the role. Monthly totals are prorated by the days the window covers in each month,
+ * daily standards multiply by those days, averages/ratios are weighted by them, and growth applies the
+ * latest month's rate to the previous window.
+ */
+function windowTarget(metric: KpiMetric, slices: TargetSlice[], previousEntries: Entry[], byKey: Map<string, KpiMetric>, scale: number) {
+  if (metric.targetMode === "growth") {
+    const configured = slices[slices.length - 1]!.targets.get(metric.id) ?? metric.defaultTarget;
+    if (configured === null) return null;
+    const baseline = aggregate(metric, previousEntries, byKey);
+    return baseline !== null && baseline > 0 ? baseline * (1 + configured / 100) : null;
+  }
+  const averaged = metric.targetMode !== "daily" && metric.aggregation !== "sum";
+  let total = 0;
+  let weight = 0;
+  for (const s of slices) {
+    const override = s.targets.get(metric.id);
+    const configured = override ?? metric.defaultTarget;
+    if (configured === null) continue;
+    if (averaged) {
+      total += configured * s.days;
+      weight += s.days;
+      continue;
+    }
+    const part = metric.targetMode === "daily" ? configured * s.days : (configured * s.days) / s.monthDays;
+    total += override === undefined ? scaleTarget(metric, part, scale) : part;
+    weight += s.days;
+  }
+  if (!weight) return null;
+  return averaged ? total / weight : total;
 }
 
 /** Monthly totals scale with role share; daily standards, averages, ratios and growth rates don't. */

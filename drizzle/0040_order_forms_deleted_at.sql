@@ -1,0 +1,1 @@
+ALTER TABLE "order_forms" ADD COLUMN "deleted_at" timestamp with time zone;

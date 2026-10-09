@@ -1,12 +1,12 @@
 import { db } from "@/db";
 import { leadErrorMessage, LeadError, submitOrderLead, verifyFormChallenge } from "@/lib/order-leads";
 import { takeResetQuota } from "@/lib/password-reset";
+import { allowedFormOrigin } from "@/lib/form-domains";
 const reply=(body:unknown,status=200)=>Response.json(body,{status,headers:{"Cache-Control":"no-store","Referrer-Policy":"no-referrer"}});
 export async function POST(request:Request,{params}:{params:Promise<{slug:string}>}){
   const {slug}=await params;
   if(!/^[a-f0-9]{24}$/.test(slug))return reply({error:"Form tidak tersedia."},404);
-  const origin=new URL(process.env.APP_URL||request.url).origin;
-  if(request.headers.get("origin")!==origin)return reply({error:"Asal permintaan tidak valid."},403);
+  if(!await allowedFormOrigin(request.headers.get("origin"),request.headers.get("host")||new URL(request.url).host,slug))return reply({error:"Asal permintaan tidak valid."},403);
   if(!request.headers.get("content-type")?.startsWith("application/json"))return reply({error:"Format data tidak valid."},415);
   let raw:Record<string,unknown>;
   try{

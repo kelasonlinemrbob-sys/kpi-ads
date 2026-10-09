@@ -1,7 +1,7 @@
 import { getCurrentUser } from "@/lib/auth";
 import { getMembers, getScorecards } from "@/lib/data";
 import { currentPeriod, isPeriod, STATUS_META } from "@/lib/kpi";
-import { ROLE_LABEL, rolesLabel } from "@/lib/roles";
+import { RESTRICTED_HOME, ROLE_LABEL, rolesLabel } from "@/lib/roles";
 
 const csv = (v: unknown) => {
   const s = v === null || v === undefined ? "" : String(v);
@@ -12,7 +12,7 @@ const csv = (v: unknown) => {
 export async function GET(req: Request) {
   const user = await getCurrentUser();
   if (!user) return new Response("Unauthorized", { status: 401 });
-  if (user.role === "cso") return new Response("Forbidden", {status:403});
+  if (RESTRICTED_HOME[user.role]) return new Response("Forbidden", { status: 403 });
   const params = new URL(req.url).searchParams;
   const p = params.get("period") ?? "";
   const period = isPeriod(p) ? p : currentPeriod();

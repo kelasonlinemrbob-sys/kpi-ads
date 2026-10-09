@@ -1,5 +1,6 @@
 import type { AdvertiserLevel, Role, Task } from "@/db/schema";
 import { hasRole, memberRoles } from "@/lib/member-roles";
+import { RESTRICTED_HOME } from "@/lib/roles";
 
 /**
  * Who may give tasks to whom, what kind of work each role gets, and who closes a task.
@@ -19,7 +20,8 @@ const isJunior = (p: TaskPerson) => p.role === "advertiser" && p.advertiserLevel
  * Everyone can send requests to web master, SEO and creative (e.g. an advertiser asking for a video).
  */
 export function canAssign(actor: TaskPerson, assignee: TaskPerson) {
-  if (actor.role === "cso" || assignee.role === "cso") return false;
+  // CSO and Creative work only in their own page, so they have no task board.
+  if (RESTRICTED_HOME[actor.role] || RESTRICTED_HOME[assignee.role]) return false;
   if (actor.role === "supervisor" || actor.id === assignee.id) return true;
   // A dual-role member gives and receives work in either of their roles.
   return memberRoles(actor).some((actorRole) => memberRoles(assignee).some((assigneeRole) => roleMayAssign(actor, actorRole, assignee, assigneeRole)));

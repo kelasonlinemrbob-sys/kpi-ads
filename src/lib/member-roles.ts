@@ -12,14 +12,19 @@ export const DEFAULT_SECONDARY_SHARE = 40;
 
 const clampShare = (share: number) => Math.min(90, Math.max(10, Math.round(share)));
 
+/** Roles without a KPI tracker: CSO works in Leads, Creative in the Creative page; neither reports or is scored. */
+export const UNTRACKED_ROLES: readonly Role[] = ["cso", "creative"];
+export const isTracked = (m: Pick<RoleHolder, "role">) => !UNTRACKED_ROLES.includes(m.role);
+
 export function hasSecondRole(m: RoleHolder): m is RoleHolder & { secondaryRole: Role } {
-  return !!m.secondaryRole && m.secondaryRole !== m.role && m.role !== "supervisor" && m.secondaryRole !== "supervisor";
+  return !!m.secondaryRole && m.secondaryRole !== m.role && m.role !== "supervisor" && m.secondaryRole !== "supervisor"
+    && isTracked(m) && !UNTRACKED_ROLES.includes(m.secondaryRole);
 }
 
 /** Operational KPI/report roles, separate from the account role used for authorization.
  * Supervisors run their own ads with the full advertiser targets. */
 export function roleSlots(m: RoleHolder): RoleSlot[] {
-  if (m.role === "cso") return [];
+  if (!isTracked(m)) return [];
   if (m.role === "supervisor") return [{ role: "advertiser", share: 100 }];
   if (!hasSecondRole(m)) return [{ role: m.role, share: 100 }];
   const second = clampShare(m.secondaryShare ?? DEFAULT_SECONDARY_SHARE);

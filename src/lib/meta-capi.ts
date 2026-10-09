@@ -16,7 +16,7 @@ const MAX_ATTEMPTS=8;
 const capiInput=z.object({enabled:z.boolean(),pixelId:z.string().trim().regex(/^\d{5,25}$/, "Pixel ID CAPI harus berupa angka."),token:z.string().trim().max(4096).refine(v=>!v||/^[A-Za-z0-9_.|-]{20,4096}$/.test(v),'Access Token tidak valid.')});
 export async function saveCapiConfig(tx:LeadDb,actor:{id:number;role:string},formId:number,input:CapiInput){
  const [form]=await tx.select().from(orderForms).where(eq(orderForms.id,formId)).for('update');
- if(!form||!(actor.role==='supervisor'||actor.role==='advertiser'&&form.ownerId===actor.id))throw new CapiError("Tidak memiliki akses konfigurasi CAPI.");
+ if(!form||form.deletedAt||!(actor.role==='supervisor'||actor.role==='advertiser'&&form.ownerId===actor.id))throw new CapiError("Tidak memiliki akses konfigurasi CAPI.");
  const [old]=await tx.select().from(orderFormCapi).where(eq(orderFormCapi.formId,formId)).for('update');
  if(!input.enabled&&!input.pixelId&&!input.token&&!old)return;
  // Disabling must remain possible even if an old encryption key is unavailable.
@@ -84,7 +84,7 @@ export async function testSavedCapi(actor:{id:number;role:string},formId:number,
  if(!/^[A-Za-z0-9_-]{3,100}$/.test(testCode))throw new CapiError('Isi Test Event Code dari Events Manager. Tes tidak dikirim sebagai event produksi.');
  return db.transaction(async tx=>{
   const [form]=await tx.select().from(orderForms).where(eq(orderForms.id,formId)).for('update');
-  if(!form||!(actor.role==='supervisor'||actor.role==='advertiser'&&form.ownerId===actor.id))throw new CapiError('Form tidak ditemukan.');
+  if(!form||form.deletedAt||!(actor.role==='supervisor'||actor.role==='advertiser'&&form.ownerId===actor.id))throw new CapiError('Form tidak ditemukan.');
   const [config]=await tx.select().from(orderFormCapi).where(eq(orderFormCapi.formId,formId)).for('update');
   if(!config)throw new CapiError('Simpan Pixel ID dan Access Token terlebih dahulu.');
   if(config.testedAt&&Date.now()-config.testedAt.getTime()<60000)throw new CapiError('Tunggu satu menit sebelum menguji lagi.');
@@ -101,7 +101,7 @@ export async function retryCapiEvent(actor:{id:number;role:string},formId:number
  if(!Number.isSafeInteger(formId)||formId<1||!z.uuid().safeParse(eventId).success)throw new CapiError('Event tidak valid.');
  await db.transaction(async tx=>{
   const [form]=await tx.select().from(orderForms).where(eq(orderForms.id,formId)).for('update');
-  if(!form||!(actor.role==='supervisor'||actor.role==='advertiser'&&form.ownerId===actor.id))throw new CapiError('Form tidak ditemukan.');
+  if(!form||form.deletedAt||!(actor.role==='supervisor'||actor.role==='advertiser'&&form.ownerId===actor.id))throw new CapiError('Form tidak ditemukan.');
   const [config]=await tx.select().from(orderFormCapi).where(eq(orderFormCapi.formId,formId)).for('update');
   const [event]=await tx.select().from(metaCapiOutbox).where(and(eq(metaCapiOutbox.formId,formId),eq(metaCapiOutbox.eventId,eventId))).for('update');
   if(!config?.enabled||!event||event.configVersion!==config.version||event.pixelId!==config.pixelId)throw new CapiError('Konfigurasi event sudah berubah atau CAPI tidak aktif.');

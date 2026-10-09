@@ -6,18 +6,18 @@ import { randomBytes } from "node:crypto";
 import { deliverMemberInvitation, InvitationError, invitationErrorMessage, issueMemberInvitation } from "@/lib/member-invitations";
 import { resetMailConfig } from "@/lib/reset-mail";
 import { takeResetQuota } from "@/lib/password-reset";
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
-import { advertiserLevelEnum, kpiMetrics, kpiTargets, roleEnum, users } from "@/db/schema";
+import { advertiserLevelEnum, creativeAdvertisers, kpiMetrics, kpiTargets, roleEnum, users } from "@/db/schema";
 import { createSession, requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
 import { isPeriod, periodRange } from "@/lib/kpi";
 import { parseMemberTargets } from "@/lib/member-targets";
 import { writeMemberTargets } from "@/lib/member-target-store";
 import { validTarget } from "@/lib/target-rules";
-import { DEFAULT_SECONDARY_SHARE, hasRole } from "@/lib/member-roles";
+import { DEFAULT_SECONDARY_SHARE, hasRole, isTracked } from "@/lib/member-roles";
 import { ROLE_LABEL, roleLabel } from "@/lib/roles";
 import type { FormState } from "./auth";
 
@@ -48,6 +48,14 @@ export async function saveMember(_: FormState, formData: FormData): Promise<Form
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };
   const { id, password, isActive, advertiserLevel, secondaryRole, secondaryShare, ...rest } = parsed.data;
   if (secondaryRole === "cso" || (rest.role === "cso" && secondaryRole)) return { error: "CSO menggunakan role utama tanpa role rangkap." };
+  if (secondaryRole === "creative" || (rest.role === "creative" && secondaryRole)) return { error: "Creative tidak memakai KPI, jadi tidak bisa menjadi atau memiliki role rangkap." };
+  // Creative: the advertisers they work for (none = the whole team).
+  const linkedIds = rest.role === "creative" ? [...new Set(formData.getAll("linkedAdvertiserIds").map(Number))] : [];
+  if (linkedIds.some((n) => !Number.isSafeInteger(n) || n <= 0)) return { error: "Pilihan advertiser tidak valid." };
+  if (linkedIds.length) {
+    const found = await db.select({ id: users.id }).from(users).where(and(inArray(users.id, linkedIds), inArray(users.role, ["advertiser", "supervisor"])));
+    if (found.length !== linkedIds.length) return { error: "Advertiser yang dipilih tidak ditemukan." };
+  }
   if (rest.role === "cso") {
     try { rest.csoPhone = normalizePhone(rest.csoPhone ?? ""); } catch { return { error: "Isi nomor WhatsApp CSO yang valid." }; }
   } else { rest.csoPhone = undefined; }
@@ -82,7 +90,7 @@ export async function saveMember(_: FormState, formData: FormData): Promise<Form
     if (!await takeResetQuota(db, `invitation:sender:${me.id}`, 20)) return { error: "Batas pengiriman undangan tercapai. Coba lagi dalam 15 menit." };
   }
   let targetInput: ReturnType<typeof parseMemberTargets> | undefined;
-  if (formData.has("targetPeriod")) {
+  if (formData.has("targetPeriod") && isTracked(data)) {
     try { targetInput = parseMemberTargets(formData, await db.select().from(kpiMetrics), data); }
     catch (error) { return { error: (error as Error).message }; }
   }
@@ -108,6 +116,9 @@ export async function saveMember(_: FormState, formData: FormData): Promise<Form
         userId = created.id;
       }
       if (targetInput) await writeMemberTargets(tx, userId, targetInput);
+      await tx.delete(creativeAdvertisers).where(eq(creativeAdvertisers.creativeId, userId));
+      const links = linkedIds.filter((a) => a !== userId).map((advertiserId) => ({ creativeId: userId!, advertiserId }));
+      if (links.length) await tx.insert(creativeAdvertisers).values(links);
       const issued = invite ? await issueMemberInvitation(tx, userId, me.id, new Date(), !!id) : undefined;
       return { userId, issued };
     });

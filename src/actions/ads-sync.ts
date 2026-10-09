@@ -86,7 +86,7 @@ export async function generateAdsReport(date: string, performanceDate: string): 
     accounts.map(async (account) => {
       const label = `${account.name} (${PLATFORM_LABEL[account.platform]})`;
       if (account.platform !== "meta" && account.platform !== "google") return;
-      const result = await fetchAccountCampaigns({ platform: account.platform, accountId: account.accountId, createdById: account.createdById, lpvConversionAction: account.lpvConversionAction }, performanceDate);
+      const result = await fetchAccountCampaigns({ platform: account.platform, accountId: account.accountId, lpvConversionAction: account.lpvConversionAction }, performanceDate);
       if (!result.ok) {
         failedAccounts.add(account.id);
         errors.push({ account: label, error: result.error });

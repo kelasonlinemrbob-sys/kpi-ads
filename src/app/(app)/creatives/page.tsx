@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   CalendarDaysIcon,
   ChevronDownIcon,
@@ -33,12 +33,18 @@ import {
   groupByPost,
   parseCreativeFilters,
 } from "@/lib/creatives-data";
+import { analysedContentKeys, creativeFilterKey, getLatestCreativeAnalysis } from "@/lib/ai-analysis-data";
+import { modelLabel } from "@/lib/ai-models";
+import { ANALYSIS_IMAGES_ENABLED, CONTENT_MODEL, SUMMARY_MODEL } from "@/lib/ai-provider";
+import { getKieApiKey } from "@/lib/kie-connection";
+import { creativeLabel, adsScopeFor } from "@/lib/ads-scope";
 import { can } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EmptyState, PageHeader, Panel } from "@/components/dashboard/panel";
 import { UrlSelect } from "@/components/dashboard/url-select";
+import { AiAnalysisPanel } from "./ai-analysis-panel";
 import { CreativeGallery } from "./creative-gallery";
 import { CreativeReport } from "./creative-report";
 import { CreativesTable, SyncCreativesButton } from "./creatives-table";
@@ -61,22 +67,27 @@ export default async function CreativesPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  const user = await requireUser();
+  const user = await requireUser(true);
   if (!can.viewCreatives(user.role)) redirect("/dashboard");
   const sp = await searchParams;
   const view = VIEWS.find((v) => v.key === sp.view)?.key ?? "ringkasan";
   const rank = RANKS.find((r) => r === sp.rank) ?? "impressions";
-  const filters = parseCreativeFilters(sp, user);
+  // Advertisers see only their own contents; supervisors and creatives see the whole team.
+  const scope = await adsScopeFor(user);
+  const filters = { ...parseCreativeFilters(sp, user), scope };
   const period = creativePeriod(filters.period);
+  const canRunAi = can.runAiAnalysis(user.role);
+  const aiEnabled = canRunAi && view === "ringkasan";
+  const aiFilterKey = creativeFilterKey(filters);
 
-  const [rows, allRows, team, metaAccounts, syncs] = await Promise.all([
+  const [rows, allRows, team, metaAccounts, syncs, kieKey, latestAnalysis] = await Promise.all([
     getCreativeRows(filters),
-    getCreativeRows({ period: period.key }),
+    getCreativeRows({ period: period.key, scope }),
     getCreativeTeam(),
     db
       .select({ id: adAccounts.id, name: adAccounts.name })
       .from(adAccounts)
-      .where(eq(adAccounts.platform, "meta")),
+      .where(and(eq(adAccounts.platform, "meta"), scope ? inArray(adAccounts.id, [...scope.accountIds, 0]) : undefined)),
     db
       .select()
       .from(creativeSyncs)
@@ -86,6 +97,8 @@ export default async function CreativesPage({
           eq(creativeSyncs.periodEnd, period.end),
         ),
       ),
+    canRunAi ? getKieApiKey() : null,
+    aiEnabled ? getLatestCreativeAnalysis(user.id, aiFilterKey) : null,
   ]);
   const lastSync = syncs
     .map((s) => s.syncedAt)
@@ -94,6 +107,7 @@ export default async function CreativesPage({
     (a) => !syncs.some((s) => s.adAccountId === a.id),
   );
   const posts = groupByPost(rows, filters.sort);
+  const analysedKeys = view === "galeri" ? [...(await analysedContentKeys(posts.map((p) => p.key)))] : [];
 
   // Filter options come from everything synced, so a filter never hides its own choices.
   const advertisers = [
@@ -167,7 +181,7 @@ export default async function CreativesPage({
     <div className="@container min-w-0 w-full max-w-full">
       <PageHeader
         title="Creative"
-        description="Pantau performa konten, temukan iklan terbaik, dan kelola hasil kerja tim."
+        description={user.role === "creative" && scope ? `${await creativeLabel(user.id)} · konten iklan advertiser tersebut beserta performanya.` : "Pantau performa konten, temukan iklan terbaik, dan kelola hasil kerja tim."}
         actions={
           <>
             <Button asChild variant="outline" className="h-8">
@@ -485,7 +499,7 @@ export default async function CreativesPage({
             }
             description={
               metaAccounts.length === 0
-                ? "Tambahkan akun Meta di Campaigns → Akun iklan dan isi token di Pengaturan → Integrasi, lalu sinkron."
+                ? "Pilih akun iklan Meta Anda di Pengaturan → Integrasi → Meta Ads (koneksi tim dikelola supervisor), lalu sinkron."
                 : syncs.length && !missingAccounts.length
                   ? "Meta tidak mengembalikan data iklan untuk periode ini. Pilih periode lain bila diperlukan."
                   : `Klik Sinkron dari Meta untuk mengambil konten dan performa ${period.label.toLowerCase()}.`
@@ -511,9 +525,26 @@ export default async function CreativesPage({
           />
         </Panel>
       ) : view === "ringkasan" ? (
-        <CreativeReport rows={rows} posts={posts} people={team} rank={rank} />
+        <>
+          {aiEnabled && (
+            <AiAnalysisPanel
+              key={aiFilterKey}
+              initial={latestAnalysis}
+              query={query({ view: null, rank: null, sort: null })}
+              hasKey={kieKey !== null}
+              canSetup={can.manageAdsConnection(user.role)}
+              imagesSupported={ANALYSIS_IMAGES_ENABLED}
+              modelLabel={modelLabel(SUMMARY_MODEL)}
+            />
+          )}
+          <CreativeReport rows={rows} posts={posts} people={team} rank={rank} />
+        </>
       ) : view === "galeri" ? (
-        <CreativeGallery posts={posts} people={team} />
+        <CreativeGallery
+          posts={posts}
+          people={team}
+          ai={{ period: period.key, modelLabel: modelLabel(CONTENT_MODEL), canRun: canRunAi && kieKey !== null, needsKey: canRunAi && kieKey === null, canSetup: can.manageAdsConnection(user.role), analysedKeys }}
+        />
       ) : (
         <Panel
           title={`${fmt.num(rows.length)} iklan`}

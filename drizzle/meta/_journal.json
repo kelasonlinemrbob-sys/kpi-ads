@@ -225,6 +225,76 @@
       "when": 1791278349376,
       "tag": "0031_shared_telegram",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1791336765074,
+      "tag": "0032_ai_analyses",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1791340833521,
+      "tag": "0033_ai_analysis_credits",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1791344942550,
+      "tag": "0034_shared_ads_credentials",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1791360334416,
+      "tag": "0035_shared_kie_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1791364268461,
+      "tag": "0036_lkbi_registrations",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1791444175758,
+      "tag": "0037_creative_advertisers",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1791446801637,
+      "tag": "0038_kelas_online_registrations",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1791528846900,
+      "tag": "0039_order_form_domains",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1791531127102,
+      "tag": "0040_order_forms_deleted_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1791533286233,
+      "tag": "0041_lead_whatsapp_templates",
+      "breakpoints": true
     }
   ]
 }

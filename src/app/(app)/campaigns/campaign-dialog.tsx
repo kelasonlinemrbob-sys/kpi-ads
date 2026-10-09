@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { REGISTRATION_SOURCE_LABEL, REGISTRATION_SOURCES, type RegistrationSource } from "@/lib/registration-mapping";
 
 export type CampaignRow = Omit<Campaign, "createdAt" | "updatedAt"> & { ownerName: string; ownerAvatarId?: number | null };
 
@@ -36,6 +37,7 @@ export function CampaignDialog({
   const setOpen = onOpenChange ?? setInnerOpen;
   const [state, action, pending] = useActionState(saveCampaign, undefined);
   const [platform, setPlatform] = React.useState<Campaign["platform"]>(campaign?.platform ?? "meta");
+  const [regSource, setRegSource] = React.useState<RegistrationSource>(campaign?.registrationSource === "kelas" ? "kelas" : "lkbi");
   const platformAccounts = adAccounts.filter((account) => account.platform === platform);
 
   React.useEffect(() => {
@@ -167,6 +169,36 @@ export function CampaignDialog({
               </Field>
             </div>
           )}
+          <div className="grid gap-3 sm:grid-cols-[180px_1fr]">
+            <Field label="Aplikasi pendaftaran" htmlFor="c-reg-source">
+              <Select name="registrationSource" value={regSource} onValueChange={(v: RegistrationSource) => setRegSource(v)}>
+                <SelectTrigger id="c-reg-source">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {REGISTRATION_SOURCES.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {REGISTRATION_SOURCE_LABEL[s]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Paket pendaftaran (Closing & Revenue)" htmlFor="c-packages">
+              <Input
+                id="c-packages"
+                name="registrationPackages"
+                placeholder={regSource === "kelas" ? "ADULT atau KIDS — atau * untuk semua lainnya" : "HOLIDAY, IELTS — atau * untuk semua paket lain"}
+                defaultValue={campaign?.registrationPackages ?? ""}
+              />
+            </Field>
+          </div>
+          <p className="-mt-1 text-xs text-muted-foreground">
+            {regSource === "kelas"
+              ? "Paket Kelas Online terbaca \"ADULT · kelas · paket\" atau \"KIDS · kelas · paket\". Isi ADULT untuk kelas reguler/dewasa, KIDS untuk kelas anak, atau nama kelas tertentu. "
+              : "Kata dalam nama paket di aplikasi pendaftaran LKBI, dipisah koma. "}
+            Pendaftaran yang sudah dibayar dengan paket itu menjadi Closing produk ini. Isi di satu produk saja per merek (misalnya produk Meta), supaya tidak terhitung dua kali.
+          </p>
           <Field label="Landing page URL" htmlFor="c-lp">
             <Input id="c-lp" name="landingPageUrl" type="url" placeholder="https://" defaultValue={campaign?.landingPageUrl ?? ""} />
           </Field>
